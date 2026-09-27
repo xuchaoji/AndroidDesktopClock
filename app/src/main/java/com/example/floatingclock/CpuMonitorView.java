@@ -14,19 +14,48 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * CPU 每核心监控曲线。
+ *
+ * 关键前提：很多 ROM（如 EMUI）对普通应用屏蔽了 {@code /proc/stat}，
+ * 此时**无法取得真实 CPU 占用率**，只能读到 cpufreq 频率。
+ * 因此这里按「能测到什么就显示什么」分两种模式，并在面板上明确标注：
+ *
+ *  1. 利用率模式：{@code /proc/stat} 可读 → 显示真实占用率（数字 + 曲线）
+ *  2. 频率模式：  /proc/stat 不可读 → 显示真实频率（{@code 1.6/1.9G} + 频率曲线），
+ *                绝不把频率包装成"占用率"，避免误读
+ *
+ * 频率优先用 {@code cpufreq/stats/time_in_state} 差分求窗口平均频率（平滑、无采样混叠），
+ * 读不到时退回 {@code scaling_cur_freq} 的瞬时值。
+ */
 public class CpuMonitorView extends View {
     private static final int HISTORY = 60;
     private static final String TAG = "FloatingClockCpu";
 
+    private static final int SOURCE_UNKNOWN = -1;
+    private static final int SOURCE_STAT = 0;
+    private static final int SOURCE_TIME_IN_STATE = 1;
+    private static final int SOURCE_CUR_FREQ = 2;
+
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<float[]> history = new ArrayList<>();
+    private int dataSource = SOURCE_UNKNOWN;
+    private String statusText = "初始化";
+
+    /** /proc/stat 上一次的 {total, idle} 累计值 */
     private long[][] lastStats;
+
+    /** time_in_state 上一次快照 */
+    private List<long[]> tisTimes;
+
+    /** 频率模式下每核心当前频率（kHz），用于文字显示 */
+    private double[] curFreqKhz;
+
     private int coreCount;
     private int[] coreOrder;
     private long[] coreMaxFreqs;
     private boolean[] coreIsBig;
     private boolean topologyLogged;
-    private String statusText = "初始化";
 
     public CpuMonitorView(Context context) {
         super(context);
@@ -34,35 +63,26 @@ public class CpuMonitorView extends View {
     }
 
     public void sample() {
-        long[][] stats = readCpuStats();
-        if (stats == null || stats.length == 0) stats = readCpuFreqStats();
-        if (stats == null || stats.length == 0) {
-            statusText = "无数据";
-            setContentDescription("CPU监控：无数据");
+        if (dataSource == SOURCE_UNKNOWN) detectDataSource();
+
+        float[] values;
+        switch (dataSource) {
+            case SOURCE_STAT:
+                values = sampleFromStat();
+                break;
+            case SOURCE_TIME_IN_STATE:
+                values = sampleFromTimeInState();
+                break;
+            default:
+                values = sampleFromCurFreq();
+                break;
+        }
+        if (values == null || values.length == 0) {
+            if (coreCount <= 0) statusText = "采样中";
             invalidate();
             return;
         }
-        statusText = "采样中";
-        if (lastStats == null || lastStats.length != stats.length) {
-            lastStats = stats;
-            coreCount = stats.length;
-            ensureCoreInfo();
-            ensureHistory();
-            invalidate();
-            return;
-        }
-        float[] values = new float[stats.length];
-        for (int i = 0; i < stats.length; i++) {
-            long prevTotal = lastStats[i][0];
-            long prevIdle = lastStats[i][1];
-            long total = stats[i][0];
-            long idle = stats[i][1];
-            long totalDelta = Math.max(1, total - prevTotal);
-            long idleDelta = Math.max(0, idle - prevIdle);
-            values[i] = Math.max(0f, Math.min(1f, 1f - idleDelta / (float) totalDelta));
-        }
-        lastStats = stats;
-        coreCount = stats.length;
+        coreCount = values.length;
         ensureCoreInfo();
         history.add(values);
         while (history.size() > HISTORY) history.remove(0);
@@ -71,21 +91,256 @@ public class CpuMonitorView extends View {
         invalidate();
     }
 
-    private void ensureHistory() {
-        if (history.isEmpty() && coreCount > 0) {
-            float[] zeros = new float[coreCount];
-            history.add(zeros);
-            updateAccessibilitySummary(zeros);
+    // ---------------------------------------------------------------- 数据源探测
+
+    private void detectDataSource() {
+        if (readTextFile("/proc/stat") != null) {
+            dataSource = SOURCE_STAT;
+        } else if (readTextFile("/sys/devices/system/cpu/cpu0/cpufreq/stats/time_in_state") != null) {
+            dataSource = SOURCE_TIME_IN_STATE;
+        } else {
+            dataSource = SOURCE_CUR_FREQ;
+        }
+        Log.i(TAG, "CPU 数据源：" + sourceLabel()
+                + "（/proc/stat " + (dataSource == SOURCE_STAT ? "可读" : "不可读") + "）");
+    }
+
+    private String sourceLabel() {
+        switch (dataSource) {
+            case SOURCE_STAT: return "/proc/stat 真实占用率";
+            case SOURCE_TIME_IN_STATE: return "频率监控（time_in_state 窗口平均）";
+            default: return "频率监控（瞬时频率）";
         }
     }
 
+    private String sourceHint() {
+        switch (dataSource) {
+            case SOURCE_STAT: return "真实占用率";
+            case SOURCE_TIME_IN_STATE: return "频率曲线（系统屏蔽 /proc/stat）";
+            default: return "频率曲线（系统屏蔽 /proc/stat）";
+        }
+    }
+
+    private boolean isFreqMode() {
+        return dataSource != SOURCE_STAT;
+    }
+
+    // ---------------------------------------------------------------- 三级采样
+
+    /** 1) /proc/stat 累计计数差分 = 真实占用率。 */
+    private float[] sampleFromStat() {
+        long[][] stats = readProcStat();
+        if (stats == null || stats.length == 0) return null;
+        if (lastStats == null || lastStats.length != stats.length) {
+            lastStats = stats;
+            return null;
+        }
+        float[] values = new float[stats.length];
+        for (int i = 0; i < stats.length; i++) {
+            long totalDelta = Math.max(1, stats[i][0] - lastStats[i][0]);
+            long idleDelta = Math.max(0, stats[i][1] - lastStats[i][1]);
+            values[i] = clamp01(1f - idleDelta / (float) totalDelta);
+        }
+        lastStats = stats;
+        return values;
+    }
+
+    /**
+     * 2) time_in_state 差分求窗口平均频率，再归一化到 0..1 作为曲线高度。
+     * 注意：这是**频率**，不是占用率。
+     */
+    private float[] sampleFromTimeInState() {
+        int count = Runtime.getRuntime().availableProcessors();
+        if (count <= 0) return null;
+        List<long[]> freqs = new ArrayList<>();
+        List<long[]> times = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            long[][] table = readTimeInState(i);
+            if (table == null) return null;
+            freqs.add(table[0]);
+            times.add(table[1]);
+        }
+        if (tisTimes == null || tisTimes.size() != times.size()) {
+            tisTimes = times;
+            return null;
+        }
+        float[] values = new float[count];
+        double[] khz = new double[count];
+        for (int i = 0; i < count; i++) {
+            long[] f = freqs.get(i);
+            long min = Long.MAX_VALUE;
+            long max = 0L;
+            for (long v : f) {
+                if (v > 0) {
+                    min = Math.min(min, v);
+                    max = Math.max(max, v);
+                }
+            }
+            double avg = averageFreq(f, tisTimes.get(i), times.get(i));
+            khz[i] = avg;
+            values[i] = (min == Long.MAX_VALUE || max <= min || avg <= 0)
+                    ? 0f : clamp01((float) ((avg - min) / (double) (max - min)));
+        }
+        tisTimes = times;
+        curFreqKhz = khz;
+        return values;
+    }
+
+    /** 3) 兜底：直接用 scaling_cur_freq 的瞬时频率。 */
+    private float[] sampleFromCurFreq() {
+        int count = Runtime.getRuntime().availableProcessors();
+        if (count <= 0) return null;
+        float[] values = new float[count];
+        double[] khz = new double[count];
+        boolean any = false;
+        for (int i = 0; i < count; i++) {
+            long cur = readLongFile(freqPath(i, "scaling_cur_freq"));
+            long max = readLongFile(freqPath(i, "cpuinfo_max_freq"));
+            long min = readLongFile(freqPath(i, "cpuinfo_min_freq"));
+            if (cur > 0 && max > 0) {
+                if (min <= 0 || min >= max) min = 0;
+                khz[i] = cur;
+                values[i] = clamp01((cur - min) / (float) (max - min));
+                any = true;
+            }
+        }
+        curFreqKhz = khz;
+        return any ? values : null;
+    }
+
+    /** 按各频率档位驻留时间加权，得到窗口内的平均频率（kHz）。 */
+    private double averageFreq(long[] freqs, long[] prev, long[] now) {
+        double weighted = 0d;
+        double total = 0d;
+        int n = Math.min(freqs.length, Math.min(prev.length, now.length));
+        for (int i = 0; i < n; i++) {
+            long delta = now[i] - prev[i];
+            if (delta < 0) delta = 0; // 计数器被重置
+            weighted += delta * (double) freqs[i];
+            total += delta;
+        }
+        return total > 0d ? weighted / total : 0d;
+    }
+
+    // ---------------------------------------------------------------- 读取工具
+
+    private long[][] readProcStat() {
+        List<long[]> result = new ArrayList<>();
+        BufferedReader br = null;
+        try {
+            br = new BufferedReader(new FileReader("/proc/stat"));
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (!line.startsWith("cpu")) continue;
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length < 5 || parts[0].length() <= 3) continue;
+                if (!Character.isDigit(parts[0].charAt(3))) continue;
+                long user = parse(parts, 1);
+                long nice = parse(parts, 2);
+                long system = parse(parts, 3);
+                long idle = parse(parts, 4);
+                long iowait = parse(parts, 5);
+                long irq = parse(parts, 6);
+                long softirq = parse(parts, 7);
+                long steal = parse(parts, 8);
+                long idleAll = idle + iowait;
+                long total = user + nice + system + idle + iowait + irq + softirq + steal;
+                result.add(new long[]{total, idleAll});
+            }
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            close(br);
+        }
+        return result.isEmpty() ? null : result.toArray(new long[result.size()][]);
+    }
+
+    /** 返回 {freqs, times}；读不到返回 null。 */
+    private long[][] readTimeInState(int core) {
+        String content = readTextFile("/sys/devices/system/cpu/cpu" + core + "/cpufreq/stats/time_in_state");
+        if (content == null) return null;
+        List<Long> freqs = new ArrayList<>();
+        List<Long> times = new ArrayList<>();
+        for (String line : content.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            String[] parts = trimmed.split("\\s+");
+            if (parts.length < 2) continue;
+            try {
+                freqs.add(Long.parseLong(parts[0]));
+                times.add(Long.parseLong(parts[1]));
+            } catch (NumberFormatException ignored) {
+                // 跳过表头等非数字行
+            }
+        }
+        if (freqs.isEmpty()) return null;
+        long[] freqArr = new long[freqs.size()];
+        long[] timeArr = new long[times.size()];
+        for (int i = 0; i < freqs.size(); i++) {
+            freqArr[i] = freqs.get(i);
+            timeArr[i] = times.get(i);
+        }
+        return new long[][]{freqArr, timeArr};
+    }
+
+    private String freqPath(int core, String name) {
+        return "/sys/devices/system/cpu/cpu" + core + "/cpufreq/" + name;
+    }
+
+    private String readTextFile(String path) {
+        BufferedReader br = null;
+        try {
+            File file = new File(path);
+            if (!file.exists() || !file.canRead()) return null;
+            br = new BufferedReader(new FileReader(file));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) {
+                sb.append(line).append('\n');
+            }
+            return sb.length() == 0 ? null : sb.toString();
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            close(br);
+        }
+    }
+
+    private long readLongFile(String path) {
+        String content = readTextFile(path);
+        if (content == null) return 0L;
+        try {
+            return Long.parseLong(content.trim());
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private void close(BufferedReader br) {
+        try { if (br != null) br.close(); } catch (Exception ignored) { }
+    }
+
+    private long parse(String[] parts, int index) {
+        if (index >= parts.length) return 0L;
+        try { return Long.parseLong(parts[index]); } catch (Exception e) { return 0L; }
+    }
+
+    private float clamp01(float v) {
+        return Math.max(0f, Math.min(1f, v));
+    }
+
+    // ---------------------------------------------------------------- 大小核识别
+
     private void ensureCoreInfo() {
         if (coreCount <= 0) return;
-        if (coreOrder != null && coreOrder.length == coreCount && coreMaxFreqs != null && coreMaxFreqs.length == coreCount) return;
+        if (coreOrder != null && coreOrder.length == coreCount
+                && coreMaxFreqs != null && coreMaxFreqs.length == coreCount) {
+            return;
+        }
         coreMaxFreqs = new long[coreCount];
         for (int i = 0; i < coreCount; i++) {
-            long max = readLongFile("/sys/devices/system/cpu/cpu" + i + "/cpufreq/cpuinfo_max_freq");
-            if (max <= 0) max = readLongFile("/sys/devices/system/cpu/cpu" + i + "/cpufreq/scaling_max_freq");
+            long max = readLongFile(freqPath(i, "cpuinfo_max_freq"));
+            if (max <= 0) max = readLongFile(freqPath(i, "scaling_max_freq"));
             coreMaxFreqs[i] = max;
         }
         classifyBigLittle();
@@ -170,7 +425,11 @@ public class CpuMonitorView extends View {
         if (coreMaxFreqs == null || core < 0 || core >= coreMaxFreqs.length) return "?";
         long freq = coreMaxFreqs[core];
         if (freq <= 0) return "?";
-        return String.format(Locale.US, "%.1fG", freq / 1_000_000d);
+        return ghz(freq) + "G";
+    }
+
+    private String ghz(double khz) {
+        return String.format(Locale.US, "%.1f", khz / 1_000_000d);
     }
 
     private boolean isBig(int core) {
@@ -186,6 +445,8 @@ public class CpuMonitorView extends View {
         return "CPU " + bigCount + "大+" + smallCount + "小";
     }
 
+    // ---------------------------------------------------------------- 无障碍与日志
+
     private void updateAccessibilitySummary(float[] values) {
         if (values == null || values.length == 0) {
             setContentDescription("CPU监控：无数据");
@@ -199,13 +460,23 @@ public class CpuMonitorView extends View {
     }
 
     private String buildSummary(float[] values) {
-        StringBuilder sb = new StringBuilder("CPU监控：");
+        StringBuilder sb = new StringBuilder("CPU监控[")
+                .append(dataSource == SOURCE_STAT ? "占用率"
+                        : dataSource == SOURCE_TIME_IN_STATE ? "频率/窗口平均" : "频率/瞬时")
+                .append("]：");
         for (int i = 0; i < Math.min(values.length, 8); i++) {
             if (i > 0) sb.append(' ');
-            sb.append('C').append(i).append('=').append(Math.round(values[i] * 100)).append('%');
+            sb.append('C').append(i).append('=');
+            if (isFreqMode() && curFreqKhz != null && i < curFreqKhz.length && curFreqKhz[i] > 0) {
+                sb.append(String.format(Locale.US, "%.2fG", curFreqKhz[i] / 1_000_000d));
+            } else {
+                sb.append(Math.round(values[i] * 100)).append('%');
+            }
         }
         return sb.toString();
     }
+
+    // ---------------------------------------------------------------- 绘制
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
@@ -228,7 +499,7 @@ public class CpuMonitorView extends View {
         paint.setColor(Color.argb(215, 255, 255, 255));
         paint.setTextSize(dp(11));
         paint.setFakeBoldText(true);
-        canvas.drawText(buildTitle(), dp(9), dp(15), paint);
+        canvas.drawText(buildTitle(), dp(9), dp(14), paint);
         paint.setFakeBoldText(false);
 
         if (coreCount <= 0) {
@@ -236,6 +507,14 @@ public class CpuMonitorView extends View {
             paint.setColor(Color.argb(160, 255, 255, 255));
             canvas.drawText(statusText, dp(9), dp(36), paint);
             return;
+        }
+
+        // /proc/stat 不可读时必须标明是估算值，避免误读成真实利用率
+        boolean showHint = dataSource != SOURCE_STAT;
+        if (showHint) {
+            paint.setTextSize(dp(8));
+            paint.setColor(Color.argb(150, 255, 255, 255));
+            canvas.drawText(sourceHint(), dp(9), dp(24), paint);
         }
 
         // 大核全宽正常大小；小核半宽、两个一行紧凑排布
@@ -251,7 +530,7 @@ public class CpuMonitorView extends View {
 
         float left = dp(6);
         float contentW = w - dp(12);
-        float top = dp(20);
+        float top = showHint ? dp(31) : dp(20);
         float gap = dp(4);
         float available = h - top - dp(8) - gap * Math.max(0, totalRows - 1);
         float unit = available / Math.max(1f, bigCores.size() * 2f + smallRows);
@@ -281,8 +560,15 @@ public class CpuMonitorView extends View {
         float current = latestValue(core);
         paint.setTextSize(wide ? dp(9) : dp(8));
         paint.setColor(Color.argb(200, 255, 255, 255));
-        // 不显示 C0/C1 这类核编号，只显示频率档位与占用率
-        String label = freqText(core) + " " + Math.round(current * 100) + "%";
+        // 占用率模式显示「上限 百分比」；频率模式显示「当前/上限」——不把频率冒充成占用率
+        String label;
+        if (isFreqMode()) {
+            double cur = (curFreqKhz != null && core < curFreqKhz.length) ? curFreqKhz[core] : 0d;
+            long max = (coreMaxFreqs != null && core < coreMaxFreqs.length) ? coreMaxFreqs[core] : 0L;
+            label = (cur > 0 ? ghz(cur) : "?") + "/" + (max > 0 ? ghz(max) : "?") + "G";
+        } else {
+            label = freqText(core) + " " + Math.round(current * 100) + "%";
+        }
         canvas.drawText(label, x + dp(4), y + dp(10), paint);
 
         if (history.size() < 2) return;
@@ -326,77 +612,6 @@ public class CpuMonitorView extends View {
                 Color.rgb(170, 140, 255), Color.rgb(255, 159, 67), Color.rgb(72, 219, 251), Color.rgb(29, 209, 161)
         };
         return colors[core % colors.length];
-    }
-
-    private long[][] readCpuStats() {
-        List<long[]> result = new ArrayList<>();
-        BufferedReader br = null;
-        try {
-            br = new BufferedReader(new FileReader("/proc/stat"));
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (!line.startsWith("cpu")) continue;
-                String[] parts = line.trim().split("\\s+");
-                if (parts.length < 5 || parts[0].length() <= 3) continue;
-                if (parts[0].charAt(0) == 'c' && parts[0].charAt(1) == 'p' && parts[0].charAt(2) == 'u' && Character.isDigit(parts[0].charAt(3))) {
-                    long user = parse(parts, 1);
-                    long nice = parse(parts, 2);
-                    long system = parse(parts, 3);
-                    long idle = parse(parts, 4);
-                    long iowait = parse(parts, 5);
-                    long irq = parse(parts, 6);
-                    long softirq = parse(parts, 7);
-                    long steal = parse(parts, 8);
-                    long idleAll = idle + iowait;
-                    long total = user + nice + system + idle + iowait + irq + softirq + steal;
-                    result.add(new long[]{total, idleAll});
-                }
-            }
-        } catch (Throwable ignored) {
-            return null;
-        } finally {
-            try { if (br != null) br.close(); } catch (Exception ignored) { }
-        }
-        return result.toArray(new long[result.size()][]);
-    }
-
-    private long[][] readCpuFreqStats() {
-        int count = Runtime.getRuntime().availableProcessors();
-        if (count <= 0) return null;
-        long[][] result = new long[count][];
-        long now = System.currentTimeMillis();
-        int valid = 0;
-        for (int i = 0; i < count; i++) {
-            long cur = readLongFile("/sys/devices/system/cpu/cpu" + i + "/cpufreq/scaling_cur_freq");
-            long max = readLongFile("/sys/devices/system/cpu/cpu" + i + "/cpufreq/cpuinfo_max_freq");
-            long busy = 0L;
-            if (cur > 0 && max > 0) {
-                busy = Math.max(0, Math.min(1000, cur * 1000 / max));
-                valid++;
-            }
-            result[i] = new long[]{now + 1000, 1000 - busy};
-        }
-        return valid > 0 ? result : null;
-    }
-
-    private long readLongFile(String path) {
-        BufferedReader br = null;
-        try {
-            File file = new File(path);
-            if (!file.exists()) return 0L;
-            br = new BufferedReader(new FileReader(file));
-            String line = br.readLine();
-            return line == null ? 0L : Long.parseLong(line.trim());
-        } catch (Throwable ignored) {
-            return 0L;
-        } finally {
-            try { if (br != null) br.close(); } catch (Exception ignored) { }
-        }
-    }
-
-    private long parse(String[] parts, int index) {
-        if (index >= parts.length) return 0L;
-        try { return Long.parseLong(parts[index]); } catch (Exception e) { return 0L; }
     }
 
     private int dp(float value) {
