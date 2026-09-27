@@ -27,7 +27,18 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-35 build-tools;35.0.0'
+          packages: |
+            platforms;android-35
+            build-tools;35.0.0
+          accept-android-sdk-licenses: true
+
+      - name: Gradle info
+        run: |
+          chmod +x gradlew
+          ./gradlew --version
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/platforms" || true
+          ls "$ANDROID_SDK_ROOT/build-tools" || true
 
       - name: Build APK
         id: build
@@ -38,7 +49,6 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          chmod +x gradlew
           if [ -n "${KEYSTORE_BASE64:-}" ]; then
             echo "==> 使用自有签名证书构建 release APK"
             printf '%s' "$KEYSTORE_BASE64" | base64 -d > release.jks
@@ -48,11 +58,11 @@ jobs:
               echo "keyAlias=$KEY_ALIAS"
               echo "keyPassword=$KEY_PASSWORD"
             } > keystore.properties
-            ./gradlew --no-daemon assembleRelease
+            ./gradlew --no-daemon --stacktrace assembleRelease
             APK=app/build/outputs/apk/release/app-release.apk
           else
             echo "==> 未配置签名密钥，回退为 debug APK"
-            ./gradlew --no-daemon assembleDebug
+            ./gradlew --no-daemon --stacktrace assembleDebug
             APK=app/build/outputs/apk/debug/app-debug.apk
           fi
           test -f "$APK"
