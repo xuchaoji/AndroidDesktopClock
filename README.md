@@ -45,7 +45,7 @@ Android 桌面时钟 / 悬浮时钟应用。
 
 ```bash
 # 依赖：JDK 17、Android SDK platform 35、build-tools 35.0.0
-gradle assembleDebug
+./gradlew assembleDebug
 
 # 产物
 app/build/outputs/apk/debug/app-debug.apk
@@ -57,6 +57,47 @@ app/build/outputs/apk/debug/app-debug.apk
 ```properties
 sdk.dir=/path/to/android-sdk
 ```
+
+## 发布（GitHub Actions 自动出包）
+
+推一个 `v*` 标签即可自动构建 APK 并挂到 Release：
+
+```bash
+git tag v1.0
+git push origin v1.0
+```
+
+随后可在 `https://github.com/xuchaoji/AndroidDesktopClock/releases` 下载，
+附件包含 `AndroidDesktopClock-v1.0.apk` 与 `SHA256SUMS.txt`。
+
+流水线定义见 `.github/workflows/release.yml`：
+
+- **未配置签名密钥**时：构建 debug APK（可安装，但系统会提示来源不受信任）
+- **配置了签名密钥**时：构建并使用自有证书签名的 release APK
+
+### 配置自有签名（可选，推荐正式分发时使用）
+
+```bash
+# 1. 生成 keystore（只需一次，务必备份，丢失后无法覆盖升级）
+keytool -genkeypair -v -keystore release.jks -alias desktopclock \
+  -keyalg RSA -keysize 2048 -validity 10000
+
+# 2. 转成 base64
+base64 -w0 release.jks > release.jks.b64
+```
+
+在仓库 `Settings → Secrets and variables → Actions` 添加 4 个 secret：
+
+| Secret | 值 |
+|---|---|
+| `KEYSTORE_BASE64` | `release.jks.b64` 的内容 |
+| `KEYSTORE_PASSWORD` | keystore 密码 |
+| `KEY_ALIAS` | `desktopclock` |
+| `KEY_PASSWORD` | key 密码 |
+
+配置后重新推标签即产出签名 release APK。`keystore.properties`、`*.jks` 已在 `.gitignore` 中，不会入库。
+
+> 注意：debug 包与 release 包签名不同，两者**不能互相覆盖安装**，切换时需先卸载。
 
 ## 目录结构
 

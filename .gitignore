@@ -6,3 +6,8 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# 签名相关（绝不入库）
+keystore.properties
+*.jks
+*.keystore
