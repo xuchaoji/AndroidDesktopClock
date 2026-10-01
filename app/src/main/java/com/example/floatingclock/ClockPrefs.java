@@ -21,6 +21,7 @@ public final class ClockPrefs {
     public static final String KEY_DESKTOP_FORMAT = "desktop_time_format";
     public static final String KEY_DESKTOP_BOLD = "desktop_bold";
     public static final String KEY_DESKTOP_SHOW_BATTERY = "desktop_show_battery";
+    public static final String KEY_DESKTOP_SHOW_NETWORK = "desktop_show_network";
     public static final String KEY_DESKTOP_SHOW_CPU = "desktop_show_cpu";
     public static final String KEY_CPU_OVERLAY = "cpu_overlay";
     public static final String KEY_CPU_OVERLAY_X = "cpu_overlay_x";
@@ -52,9 +53,11 @@ public final class ClockPrefs {
         if (!prefs.contains(KEY_DESKTOP_FORMAT)) { editor.putString(KEY_DESKTOP_FORMAT, DEFAULT_DESKTOP_FORMAT); changed = true; }
         if (!prefs.contains(KEY_DESKTOP_BOLD)) { editor.putBoolean(KEY_DESKTOP_BOLD, false); changed = true; }
         if (!prefs.contains(KEY_DESKTOP_SHOW_BATTERY)) { editor.putBoolean(KEY_DESKTOP_SHOW_BATTERY, true); changed = true; }
+        if (!prefs.contains(KEY_DESKTOP_SHOW_NETWORK)) { editor.putBoolean(KEY_DESKTOP_SHOW_NETWORK, true); changed = true; }
         if (!prefs.contains(KEY_DESKTOP_SHOW_CPU)) { editor.putBoolean(KEY_DESKTOP_SHOW_CPU, false); changed = true; }
         if (!prefs.contains(KEY_CPU_OVERLAY)) { editor.putBoolean(KEY_CPU_OVERLAY, false); changed = true; }
         if (changed) editor.apply();
+        DesktopConfig.ensureDefaults(prefs);
     }
 
     public static String getTextColor(SharedPreferences prefs) { return prefs.getString(KEY_TEXT_COLOR, DEFAULT_TEXT_COLOR); }
@@ -69,6 +72,7 @@ public final class ClockPrefs {
     public static String getDesktopFormat(SharedPreferences prefs) { return stripMilliseconds(prefs.getString(KEY_DESKTOP_FORMAT, DEFAULT_DESKTOP_FORMAT)); }
     public static boolean isDesktopBold(SharedPreferences prefs) { return prefs.getBoolean(KEY_DESKTOP_BOLD, false); }
     public static boolean showDesktopBattery(SharedPreferences prefs) { return prefs.getBoolean(KEY_DESKTOP_SHOW_BATTERY, true); }
+    public static boolean showDesktopNetwork(SharedPreferences prefs) { return prefs.getBoolean(KEY_DESKTOP_SHOW_NETWORK, true); }
     public static boolean showDesktopCpu(SharedPreferences prefs) { return prefs.getBoolean(KEY_DESKTOP_SHOW_CPU, false); }
     public static boolean showCpuOverlay(SharedPreferences prefs) { return prefs.getBoolean(KEY_CPU_OVERLAY, false); }
 

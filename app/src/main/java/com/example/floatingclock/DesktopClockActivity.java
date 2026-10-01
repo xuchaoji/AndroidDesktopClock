@@ -5,6 +5,8 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.TrafficStats;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -16,14 +18,16 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Locale;
 import java.util.Random;
 
 public class DesktopClockActivity extends AppCompatActivity {
@@ -33,21 +37,40 @@ public class DesktopClockActivity extends AppCompatActivity {
 
     private FrameLayout root;
     private TextView clockView;
-    private LinearLayout infoPanel;
     private TextView dateView;
     private TextView batteryView;
+    private TextView networkView;
     private TextView hintView;
     private CpuMonitorView cpuMonitorView;
     private Handler handler;
     private SimpleDateFormat formatter;
     private final Random random = new Random();
     private float brightness = -1f;
-    private float brightnessStartY;
+    private float touchDownX;
+    private float touchDownY;
     private float brightnessStartValue;
     private boolean brightnessGesture;
     private boolean movedDuringTouch;
+    public static final String EXTRA_EDIT_MODE = "edit_mode";
+
+    private SharedPreferences prefs;
+    private boolean showDate;
     private boolean showBattery;
+    private boolean showNetwork;
     private boolean showCpu;
+    private boolean editMode;
+    private FrameLayout editToolbar;
+    private long lastRxBytes = -1L;
+    private long lastTxBytes = -1L;
+    private long lastNetworkSampleMs = -1L;
+    private final Runnable longPressExitRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!isFinishing() && !isDestroyed()) {
+                finish();
+            }
+        }
+    };
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
@@ -70,6 +93,13 @@ public class DesktopClockActivity extends AppCompatActivity {
         }
     };
 
+    private final Runnable networkUpdater = new Runnable() {
+        @Override public void run() {
+            updateNetworkSpeed();
+            handler.postDelayed(this, 1000L);
+        }
+    };
+
     private final Runnable cpuUpdater = new Runnable() {
         @Override public void run() {
             if (cpuMonitorView != null && showCpu) cpuMonitorView.sample();
@@ -81,6 +111,9 @@ public class DesktopClockActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         handler = new Handler(Looper.getMainLooper());
+        prefs = getSharedPreferences(ClockPrefs.NAME, MODE_PRIVATE);
+        ClockPrefs.ensureDefaults(prefs);
+        editMode = getIntent().getBooleanExtra(EXTRA_EDIT_MODE, false);
         configureWindow();
         buildUi();
         applySettings();
@@ -92,7 +125,7 @@ public class DesktopClockActivity extends AppCompatActivity {
         enterImmersiveMode();
         applySettings();
         handler.removeCallbacks(burnInMover);
-        handler.postDelayed(burnInMover, 10_000L);
+        if (!editMode) handler.postDelayed(burnInMover, 10_000L);
     }
 
     @Override
@@ -101,7 +134,9 @@ public class DesktopClockActivity extends AppCompatActivity {
         handler.removeCallbacks(ticker);
         handler.removeCallbacks(burnInMover);
         handler.removeCallbacks(batteryUpdater);
+        handler.removeCallbacks(networkUpdater);
         handler.removeCallbacks(cpuUpdater);
+        handler.removeCallbacks(longPressExitRunnable);
     }
 
     @Override
@@ -137,26 +172,18 @@ public class DesktopClockActivity extends AppCompatActivity {
                 Gravity.CENTER);
         root.addView(clockView, params);
 
-        infoPanel = new LinearLayout(this);
-        infoPanel.setOrientation(LinearLayout.VERTICAL);
-        infoPanel.setGravity(Gravity.END);
-        infoPanel.setPadding(dp(16), dp(8), dp(16), dp(8));
-        FrameLayout.LayoutParams infoParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.END);
-        infoParams.setMargins(0, dp(20), dp(24), 0);
-        root.addView(infoPanel, infoParams);
-
         dateView = new TextView(this);
         dateView.setText("0000-00-00");
         dateView.setTextColor(Color.argb(210, 255, 255, 255));
         dateView.setTextSize(24);
         dateView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         dateView.setGravity(Gravity.END);
-        infoPanel.addView(dateView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+        dateView.setPadding(dp(8), dp(6), dp(8), dp(6));
+        FrameLayout.LayoutParams dateParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        dateParams.setMargins(0, dp(20), dp(24), 0);
+        root.addView(dateView, dateParams);
 
         batteryView = new TextView(this);
         batteryView.setText("电量 --%");
@@ -164,9 +191,29 @@ public class DesktopClockActivity extends AppCompatActivity {
         batteryView.setTextSize(20);
         batteryView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         batteryView.setGravity(Gravity.END);
-        infoPanel.addView(batteryView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+        batteryView.setPadding(dp(8), dp(6), dp(8), dp(6));
+        FrameLayout.LayoutParams batteryParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        batteryParams.setMargins(0, dp(58), dp(24), 0);
+        root.addView(batteryView, batteryParams);
+
+        networkView = new TextView(this);
+        networkView.setText(networkSpeedText("0 B/s", "0 B/s"));
+        networkView.setTextColor(Color.argb(185, 255, 255, 255));
+        networkView.setTextSize(18);
+        networkView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        networkView.setGravity(Gravity.END);
+        networkView.setSingleLine(false);
+        networkView.setLines(2);
+        networkView.setIncludeFontPadding(false);
+        networkView.setPadding(dp(12), dp(8), dp(12), dp(8));
+        FrameLayout.LayoutParams networkParams = new FrameLayout.LayoutParams(
+                dp(172),
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.END);
+        networkParams.setMargins(0, 0, dp(24), dp(18));
+        root.addView(networkView, networkParams);
 
         cpuMonitorView = new CpuMonitorView(this);
         FrameLayout.LayoutParams cpuParams = new FrameLayout.LayoutParams(dp(140), dp(258), Gravity.START | Gravity.CENTER_VERTICAL);
@@ -174,7 +221,7 @@ public class DesktopClockActivity extends AppCompatActivity {
         root.addView(cpuMonitorView, cpuParams);
 
         hintView = new TextView(this);
-        hintView.setText("点击屏幕退出 · 左侧上下滑动调亮度 · 文字会定期移动防烧屏");
+        hintView.setText("长按屏幕退出 · 左侧上下滑动调亮度 · 文字会定期移动防烧屏");
         hintView.setTextColor(Color.argb(100, 255, 255, 255));
         hintView.setTextSize(13);
         hintView.setGravity(Gravity.CENTER);
@@ -185,12 +232,16 @@ public class DesktopClockActivity extends AppCompatActivity {
         hintParams.setMargins(0, 0, 0, dp(18));
         root.addView(hintView, hintParams);
 
-        root.setOnTouchListener(this::handleRootTouch);
+        if (editMode) buildEditToolbar();
+        root.setOnTouchListener(editMode ? null : this::handleRootTouch);
         setContentView(root);
+        root.post(() -> {
+            restoreComponentPositions();
+            if (editMode) enableLayoutEditing();
+        });
     }
 
     private void applySettings() {
-        SharedPreferences prefs = getSharedPreferences(ClockPrefs.NAME, MODE_PRIVATE);
         ClockPrefs.ensureDefaults(prefs);
 
         try {
@@ -208,18 +259,28 @@ public class DesktopClockActivity extends AppCompatActivity {
         clockView.setShadowLayer(10f, 4f, 4f, shadow);
         clockView.setTextSize(ClockPrefs.getDesktopTextSize(prefs));
         clockView.setTypeface(Typeface.DEFAULT, ClockPrefs.isDesktopBold(prefs) ? Typeface.BOLD : Typeface.NORMAL);
-        boolean bold = ClockPrefs.isDesktopBold(prefs);
+        showDate = prefs.getBoolean(DesktopConfig.KEY_SHOW_DATE, true);
         showBattery = ClockPrefs.showDesktopBattery(prefs);
+        showNetwork = ClockPrefs.showDesktopNetwork(prefs);
         showCpu = ClockPrefs.showDesktopCpu(prefs);
+        dateView.setVisibility(showDate ? View.VISIBLE : View.GONE);
         batteryView.setVisibility(showBattery ? View.VISIBLE : View.GONE);
+        networkView.setVisibility(showNetwork ? View.VISIBLE : View.GONE);
         cpuMonitorView.setVisibility(showCpu ? View.VISIBLE : View.GONE);
-        int infoColor = clockView.getCurrentTextColor();
-        dateView.setTextColor(adjustAlpha(infoColor, 210));
-        batteryView.setTextColor(adjustAlpha(infoColor, 185));
-        dateView.setTypeface(Typeface.DEFAULT, bold ? Typeface.BOLD : Typeface.NORMAL);
-        batteryView.setTypeface(Typeface.DEFAULT, bold ? Typeface.BOLD : Typeface.NORMAL);
+        applyTextStyle(dateView, DesktopConfig.KEY_DATE_COLOR, DesktopConfig.KEY_DATE_SIZE,
+                DesktopConfig.KEY_DATE_BOLD, "#D2FFFFFF", 24, false);
+        applyTextStyle(batteryView, DesktopConfig.KEY_BATTERY_COLOR, DesktopConfig.KEY_BATTERY_SIZE,
+                DesktopConfig.KEY_BATTERY_BOLD, "#B9FFFFFF", 20, false);
+        applyTextStyle(networkView, DesktopConfig.KEY_NETWORK_COLOR, DesktopConfig.KEY_NETWORK_SIZE,
+                DesktopConfig.KEY_NETWORK_BOLD, "#B9FFFFFF", 18, true);
+        cpuMonitorView.setPanelAlpha(prefs.getInt(DesktopConfig.KEY_CPU_ALPHA, 100));
+        FrameLayout.LayoutParams cpuLayout = (FrameLayout.LayoutParams) cpuMonitorView.getLayoutParams();
+        cpuLayout.width = dp(prefs.getInt(DesktopConfig.KEY_CPU_WIDTH, 140));
+        cpuLayout.height = dp(prefs.getInt(DesktopConfig.KEY_CPU_HEIGHT, 258));
+        cpuMonitorView.setLayoutParams(cpuLayout);
         updateDate();
         updateBattery();
+        resetNetworkSample();
 
         String format = ClockPrefs.getDesktopFormat(prefs);
         try {
@@ -232,9 +293,14 @@ public class DesktopClockActivity extends AppCompatActivity {
         handler.post(ticker);
         handler.removeCallbacks(batteryUpdater);
         if (showBattery) handler.post(batteryUpdater);
+        handler.removeCallbacks(networkUpdater);
+        if (showNetwork) handler.post(networkUpdater);
         handler.removeCallbacks(cpuUpdater);
         if (showCpu) handler.post(cpuUpdater);
-        clockView.post(this::moveClockSlightly);
+        root.post(() -> {
+            restoreComponentPositions();
+            if (!editMode) moveClockSlightly();
+        });
     }
 
     private void updateTime() {
@@ -244,36 +310,17 @@ public class DesktopClockActivity extends AppCompatActivity {
 
     private void moveClockSlightly() {
         if (root == null || clockView == null) return;
-        int rootW = root.getWidth();
-        int rootH = root.getHeight();
-        int viewW = clockView.getWidth();
-        int viewH = clockView.getHeight();
-        if (rootW <= 0 || rootH <= 0 || viewW <= 0 || viewH <= 0) return;
-
-        int maxDx = Math.max(dp(8), Math.min(dp(36), (rootW - viewW) / 2 - dp(24)));
-        int maxDy = Math.max(dp(8), Math.min(dp(36), (rootH - viewH) / 2 - dp(48)));
-        float dx = nextNearbyOffset(clockView.getTranslationX(), maxDx, dp(10));
-        float dy = nextNearbyOffset(clockView.getTranslationY(), maxDy, dp(10));
-        clockView.animate().translationX(dx).translationY(dy).setDuration(BURN_IN_ANIMATION_MS).start();
-        if (hintView != null) {
-            hintView.animate().translationX(nextNearbyOffset(hintView.getTranslationX(), Math.max(dp(6), maxDx / 2), dp(5)))
-                    .translationY(nextNearbyOffset(hintView.getTranslationY(), Math.max(dp(5), maxDy / 3), dp(4)))
-                    .setDuration(BURN_IN_ANIMATION_MS)
-                    .start();
-        }
-        if (infoPanel != null) {
-            infoPanel.animate().translationX(0f)
-                    .translationY(nextNearbyOffset(infoPanel.getTranslationY(), dp(42), dp(8)))
-                    .setDuration(BURN_IN_ANIMATION_MS)
-                    .start();
-        }
+        if (root.getWidth() <= 0 || root.getHeight() <= 0) return;
+        animateBurnInSafely(clockView, dp(36), dp(36), dp(10));
+        animateBurnInSafely(hintView, dp(18), dp(12), dp(5));
+        animateBurnInSafely(dateView, dp(24), dp(24), dp(5));
+        animateBurnInSafely(batteryView, dp(24), dp(24), dp(5));
+        animateBurnInSafely(networkView, dp(20), dp(16), dp(5));
         if (cpuMonitorView != null && showCpu) {
-            float targetY = nextNearbyOffset(cpuMonitorView.getTranslationY(), dp(36), dp(6));
-            cpuMonitorView.animate().translationX(0f)
-                    .translationY(targetY)
-                    .setDuration(BURN_IN_ANIMATION_MS)
-                    .start();
-            Log.i(BURN_IN_TAG, "CPU面板上下移动：x=0dp y=" + Math.round(targetY / getResources().getDisplayMetrics().density)
+            animateBurnInSafely(cpuMonitorView, dp(14), dp(36), dp(6));
+            Log.i(BURN_IN_TAG, "CPU面板安全漂移：x="
+                    + Math.round(cpuMonitorView.getTranslationX() / getResources().getDisplayMetrics().density)
+                    + "dp y=" + Math.round(cpuMonitorView.getTranslationY() / getResources().getDisplayMetrics().density)
                     + "dp 时长=" + (BURN_IN_ANIMATION_MS / 1000) + "s");
         }
     }
@@ -298,8 +345,247 @@ public class DesktopClockActivity extends AppCompatActivity {
         batteryView.setText((charging ? "⚡ " : "") + "电量 " + (percent >= 0 ? percent + "%" : "--%"));
     }
 
+    private void resetNetworkSample() {
+        lastRxBytes = TrafficStats.getTotalRxBytes();
+        lastTxBytes = TrafficStats.getTotalTxBytes();
+        lastNetworkSampleMs = System.currentTimeMillis();
+        if (networkView != null && showNetwork) networkView.setText(networkSpeedText("0 B/s", "0 B/s"));
+    }
+
+    private void updateNetworkSpeed() {
+        if (networkView == null || !showNetwork) return;
+        long rxBytes = TrafficStats.getTotalRxBytes();
+        long txBytes = TrafficStats.getTotalTxBytes();
+        long now = System.currentTimeMillis();
+        if (rxBytes == TrafficStats.UNSUPPORTED || txBytes == TrafficStats.UNSUPPORTED) {
+            networkView.setText(networkSpeedText("--", "--"));
+            return;
+        }
+        if (lastRxBytes < 0L || lastTxBytes < 0L || lastNetworkSampleMs <= 0L
+                || rxBytes < lastRxBytes || txBytes < lastTxBytes) {
+            lastRxBytes = rxBytes;
+            lastTxBytes = txBytes;
+            lastNetworkSampleMs = now;
+            networkView.setText(networkSpeedText("0 B/s", "0 B/s"));
+            return;
+        }
+        long elapsedMs = Math.max(1L, now - lastNetworkSampleMs);
+        double downloadBytesPerSecond = (rxBytes - lastRxBytes) * 1000d / elapsedMs;
+        double uploadBytesPerSecond = (txBytes - lastTxBytes) * 1000d / elapsedMs;
+        networkView.setText(networkSpeedText(
+                formatSpeed(downloadBytesPerSecond),
+                formatSpeed(uploadBytesPerSecond)));
+        lastRxBytes = rxBytes;
+        lastTxBytes = txBytes;
+        lastNetworkSampleMs = now;
+    }
+
+    private String networkSpeedText(String download, String upload) {
+        return String.format(Locale.getDefault(), "↓ %10s\n↑ %10s", download, upload);
+    }
+
+    private String formatSpeed(double bytesPerSecond) {
+        double speed = Math.max(0d, bytesPerSecond);
+        if (speed < 1024d) return String.format(Locale.getDefault(), "%.0f B/s", speed);
+        speed /= 1024d;
+        if (speed < 1024d) return String.format(Locale.getDefault(), speed < 10d ? "%.1f KB/s" : "%.0f KB/s", speed);
+        speed /= 1024d;
+        if (speed < 1024d) return String.format(Locale.getDefault(), speed < 10d ? "%.1f MB/s" : "%.0f MB/s", speed);
+        speed /= 1024d;
+        return String.format(Locale.getDefault(), speed < 10d ? "%.1f GB/s" : "%.0f GB/s", speed);
+    }
+
+    private void applyTextStyle(TextView view, String colorKey, String sizeKey, String boldKey,
+                                String defaultColor, int defaultSize, boolean monospace) {
+        try { view.setTextColor(Color.parseColor(prefs.getString(colorKey, defaultColor))); }
+        catch (Exception ignored) { view.setTextColor(Color.WHITE); }
+        view.setTextSize(Math.max(10, Math.min(72, prefs.getInt(sizeKey, defaultSize))));
+        boolean bold = prefs.getBoolean(boldKey, true);
+        view.setTypeface(monospace ? Typeface.MONOSPACE : Typeface.DEFAULT,
+                bold ? Typeface.BOLD : Typeface.NORMAL);
+    }
+
     private int adjustAlpha(int color, int alpha) {
         return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
+    }
+
+    private void animateBurnInSafely(View view, int desiredMaxX, int desiredMaxY, int step) {
+        if (view == null || view.getVisibility() != View.VISIBLE || root == null) return;
+        if (view.getWidth() <= 0 || view.getHeight() <= 0) return;
+
+        // getLeft/getTop 是布局后的稳定基准位置，不包含 translation；同时兼容居中、靠边等 gravity。
+        float baseLeft = view.getLeft();
+        float baseTop = view.getTop();
+        float minDx = -baseLeft;
+        float maxDx = root.getWidth() - view.getWidth() - baseLeft;
+        float minDy = -baseTop;
+        float maxDy = root.getHeight() - view.getHeight() - baseTop;
+
+        minDx = Math.max(minDx, -desiredMaxX);
+        maxDx = Math.min(maxDx, desiredMaxX);
+        minDy = Math.max(minDy, -desiredMaxY);
+        maxDy = Math.min(maxDy, desiredMaxY);
+
+        float targetX = nextSafeOffset(view.getTranslationX(), minDx, maxDx, step);
+        float targetY = nextSafeOffset(view.getTranslationY(), minDy, maxDy, step);
+        view.animate().translationX(targetX).translationY(targetY)
+                .setDuration(BURN_IN_ANIMATION_MS).start();
+    }
+
+    private float nextSafeOffset(float current, float min, float max, int step) {
+        if (min > max) return 0f;
+        float clampedCurrent = clamp(current, min, max);
+        float target = clampedCurrent + randomOffset(Math.max(1, step));
+        return clamp(target, min, max);
+    }
+
+    private void buildEditToolbar() {
+        editToolbar = new FrameLayout(this);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(220, 28, 34, 48));
+        bg.setCornerRadius(dp(14));
+        editToolbar.setBackground(bg);
+        editToolbar.setPadding(dp(8), dp(5), dp(8), dp(5));
+
+        Button reset = editButton("恢复默认");
+        Button done = editButton("完成");
+        FrameLayout.LayoutParams resetParams = new FrameLayout.LayoutParams(dp(112), dp(44), Gravity.START | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams doneParams = new FrameLayout.LayoutParams(dp(88), dp(44), Gravity.END | Gravity.CENTER_VERTICAL);
+        editToolbar.addView(reset, resetParams);
+        editToolbar.addView(done, doneParams);
+        FrameLayout.LayoutParams toolbarParams = new FrameLayout.LayoutParams(dp(220), dp(56), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        toolbarParams.setMargins(0, dp(10), 0, 0);
+        root.addView(editToolbar, toolbarParams);
+        reset.setOnClickListener(v -> resetComponentPositions());
+        done.setOnClickListener(v -> {
+            Toast.makeText(this, "布局已保存", Toast.LENGTH_SHORT).show();
+            finish();
+        });
+    }
+
+    private Button editButton(String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(13);
+        button.setAllCaps(false);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        return button;
+    }
+
+    private void enableLayoutEditing() {
+        handler.removeCallbacks(burnInMover);
+        hintView.setText("拖动各组件调整位置 · 完成后自动保存");
+        hintView.setTextColor(Color.argb(210, 255, 220, 120));
+        pinCurrentPosition(clockView);
+        pinCurrentPosition(dateView);
+        pinCurrentPosition(batteryView);
+        pinCurrentPosition(networkView);
+        pinCurrentPosition(cpuMonitorView);
+        attachDrag(clockView, DesktopConfig.COMPONENT_CLOCK);
+        attachDrag(dateView, DesktopConfig.COMPONENT_DATE);
+        attachDrag(batteryView, DesktopConfig.COMPONENT_BATTERY);
+        attachDrag(networkView, DesktopConfig.COMPONENT_NETWORK);
+        attachDrag(cpuMonitorView, DesktopConfig.COMPONENT_CPU);
+    }
+
+    private void pinCurrentPosition(View view) {
+        if (view == null) return;
+        float x = view.getX();
+        float y = view.getY();
+        view.animate().cancel();
+        view.setTranslationX(0f);
+        view.setTranslationY(0f);
+        setBasePosition(view, x, y);
+    }
+
+    private void attachDrag(View view, String component) {
+        view.animate().cancel();
+        view.setTranslationX(0f);
+        view.setTranslationY(0f);
+        GradientDrawable outline = new GradientDrawable();
+        outline.setColor(Color.argb(28, 255, 255, 255));
+        outline.setStroke(dp(1), Color.argb(180, 255, 210, 80));
+        outline.setCornerRadius(dp(8));
+        if (view != cpuMonitorView) view.setBackground(outline);
+        view.setOnTouchListener(new View.OnTouchListener() {
+            float downRawX, downRawY, startX, startY;
+            @Override public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downRawX = event.getRawX(); downRawY = event.getRawY();
+                        startX = baseX(v); startY = baseY(v);
+                        v.bringToFront();
+                        if (editToolbar != null) editToolbar.bringToFront();
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        float x = startX + event.getRawX() - downRawX;
+                        float y = startY + event.getRawY() - downRawY;
+                        setBasePosition(v,
+                                clamp(x, 0, Math.max(0, root.getWidth() - v.getWidth())),
+                                clamp(y, 0, Math.max(0, root.getHeight() - v.getHeight())));
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        saveComponentPosition(v, component);
+                        return true;
+                    default: return true;
+                }
+            }
+        });
+    }
+
+    private void setBasePosition(View view, float x, float y) {
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) view.getLayoutParams();
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.leftMargin = Math.round(x);
+        lp.topMargin = Math.round(y);
+        view.setLayoutParams(lp);
+        view.setX(lp.leftMargin);
+        view.setY(lp.topMargin);
+    }
+
+    private float baseX(View view) {
+        return ((FrameLayout.LayoutParams) view.getLayoutParams()).leftMargin;
+    }
+
+    private float baseY(View view) {
+        return ((FrameLayout.LayoutParams) view.getLayoutParams()).topMargin;
+    }
+
+    private void saveComponentPosition(View view, String component) {
+        float maxX = Math.max(1f, root.getWidth() - view.getWidth());
+        float maxY = Math.max(1f, root.getHeight() - view.getHeight());
+        DesktopConfig.savePosition(prefs, component, baseX(view) / maxX, baseY(view) / maxY);
+    }
+
+    private void restoreComponentPositions() {
+        if (root == null || root.getWidth() <= 0) return;
+        restorePosition(clockView, DesktopConfig.COMPONENT_CLOCK);
+        restorePosition(dateView, DesktopConfig.COMPONENT_DATE);
+        restorePosition(batteryView, DesktopConfig.COMPONENT_BATTERY);
+        restorePosition(networkView, DesktopConfig.COMPONENT_NETWORK);
+        restorePosition(cpuMonitorView, DesktopConfig.COMPONENT_CPU);
+        if (editToolbar != null) editToolbar.bringToFront();
+    }
+
+    private void restorePosition(View view, String component) {
+        if (view == null || !DesktopConfig.hasPosition(prefs, component)) return;
+        pinCurrentPosition(view);
+        setBasePosition(view,
+                DesktopConfig.getX(prefs, component) * Math.max(0, root.getWidth() - view.getWidth()),
+                DesktopConfig.getY(prefs, component) * Math.max(0, root.getHeight() - view.getHeight()));
+    }
+
+    private void resetComponentPositions() {
+        prefs.edit()
+                .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_CLOCK)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_CLOCK))
+                .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_DATE)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_DATE))
+                .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_BATTERY)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_BATTERY))
+                .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_NETWORK)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_NETWORK))
+                .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_CPU)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_CPU))
+                .commit();
+        recreate();
     }
 
     private boolean handleRootTouch(View v, MotionEvent event) {
@@ -307,21 +593,29 @@ public class DesktopClockActivity extends AppCompatActivity {
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 brightnessGesture = event.getX() <= leftZone;
-                brightnessStartY = event.getY();
+                touchDownX = event.getX();
+                touchDownY = event.getY();
                 brightnessStartValue = currentBrightness();
                 movedDuringTouch = false;
+                if (!brightnessGesture) {
+                    handler.postDelayed(longPressExitRunnable, 800L);
+                }
                 return true;
             case MotionEvent.ACTION_MOVE:
                 if (brightnessGesture) {
-                    float delta = (brightnessStartY - event.getY()) / Math.max(1f, v.getHeight());
+                    float delta = (touchDownY - event.getY()) / Math.max(1f, v.getHeight());
                     setBrightness(clamp(brightnessStartValue + delta, 0.05f, 1f));
                     movedDuringTouch = true;
                     return true;
                 }
-                if (Math.abs(event.getY() - brightnessStartY) > dp(12)) movedDuringTouch = true;
+                if (Math.abs(event.getY() - touchDownY) > dp(16) || Math.abs(event.getX() - touchDownX) > dp(16)) {
+                    movedDuringTouch = true;
+                    handler.removeCallbacks(longPressExitRunnable);
+                }
                 return true;
             case MotionEvent.ACTION_UP:
-                if (!brightnessGesture && !movedDuringTouch) finish();
+            case MotionEvent.ACTION_CANCEL:
+                handler.removeCallbacks(longPressExitRunnable);
                 brightnessGesture = false;
                 return true;
             default:
@@ -341,20 +635,12 @@ public class DesktopClockActivity extends AppCompatActivity {
         attrs.screenBrightness = value;
         getWindow().setAttributes(attrs);
         if (hintView != null) {
-            hintView.setText("亮度 " + Math.round(value * 100) + "% · 点击屏幕退出 · 左侧上下滑动调亮度");
+            hintView.setText("亮度 " + Math.round(value * 100) + "% · 长按屏幕退出 · 左侧上下滑动调亮度");
         }
     }
 
     private float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
-    }
-
-    private float nextNearbyOffset(float current, int max, int step) {
-        if (max <= 0) return 0f;
-        float next = current + randomOffset(Math.max(1, step));
-        if (next > max) next = max;
-        if (next < -max) next = -max;
-        return next;
     }
 
     private float randomOffset(int max) {

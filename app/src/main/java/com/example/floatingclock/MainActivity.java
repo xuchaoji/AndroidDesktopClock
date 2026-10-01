@@ -1,5 +1,7 @@
 package com.example.floatingclock;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -16,6 +18,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.app.AlertDialog;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -45,8 +48,24 @@ public class MainActivity extends AppCompatActivity {
     private TextView desktopSizeLabel;
     private CheckBox desktopBoldCheck;
     private CheckBox desktopBatteryCheck;
+    private CheckBox desktopNetworkCheck;
     private CheckBox desktopCpuCheck;
     private CheckBox cpuOverlayCheck;
+    private CheckBox desktopDateCheck;
+    private EditText dateColorEdit;
+    private EditText batteryColorEdit;
+    private EditText networkColorEdit;
+    private SeekBar dateSizeSeek;
+    private SeekBar batterySizeSeek;
+    private SeekBar networkSizeSeek;
+    private SeekBar cpuWidthSeek;
+    private SeekBar cpuHeightSeek;
+    private SeekBar cpuAlphaSeek;
+    private CheckBox dateBoldCheck;
+    private CheckBox batteryBoldCheck;
+    private CheckBox networkBoldCheck;
+    private Spinner desktopPresetSpinner;
+    private ArrayAdapter<String> desktopPresetAdapter;
 
     private TextView preview;
     private ScrollView scrollView;
@@ -99,6 +118,7 @@ public class MainActivity extends AppCompatActivity {
         preview.setText("12:34:56");
         preview.setGravity(Gravity.CENTER);
         preview.setPadding(dp(14), dp(14), dp(14), dp(14));
+        preview.setMaxHeight(dp(260));
         preview.setBackground(cardBg(Color.rgb(35, 39, 58), 20));
         LinearLayout.LayoutParams previewParams = matchWrap();
         previewParams.setMargins(0, dp(12), 0, dp(8));
@@ -225,8 +245,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void buildDesktopSection(LinearLayout root) {
-        TextView tip = sectionTip("桌面时钟黑底全屏常亮；不支持毫秒；文字会定期轻微移动，降低烧屏风险。");
+        TextView tip = sectionTip("桌面时钟支持组件独立样式、可视化拖动布局和预设；普通模式长按屏幕退出。");
         root.addView(tip, matchWrap());
+        buildPresetControls(root);
         desktopTextColorEdit = addLabeledEdit(root, "桌面文字颜色", ClockPrefs.getDesktopTextColor(prefs), InputType.TYPE_CLASS_TEXT);
         Button pickTextColorButton = secondaryButton("选择桌面文字颜色");
         root.addView(pickTextColorButton, matchWrap());
@@ -248,17 +269,54 @@ public class MainActivity extends AppCompatActivity {
         desktopBoldCheck.setChecked(ClockPrefs.isDesktopBold(prefs));
         root.addView(desktopBoldCheck, matchWrap());
 
+        Button editLayoutButton = primaryButton("可视化编辑组件位置");
+        root.addView(editLayoutButton, matchWrap());
+        editLayoutButton.setOnClickListener(v -> {
+            if (saveAllSettings(false)) {
+                startActivity(new Intent(this, DesktopClockActivity.class)
+                        .putExtra(DesktopClockActivity.EXTRA_EDIT_MODE, true));
+            }
+        });
+
+        root.addView(label("日期组件"), matchWrap());
+        desktopDateCheck = styledCheck("显示日期", prefs.getBoolean(DesktopConfig.KEY_SHOW_DATE, true));
+        root.addView(desktopDateCheck, matchWrap());
+        dateColorEdit = addLabeledEdit(root, "日期颜色", prefs.getString(DesktopConfig.KEY_DATE_COLOR, "#D2FFFFFF"), InputType.TYPE_CLASS_TEXT);
+        dateSizeSeek = addSizeSeek(root, "日期字号", prefs.getInt(DesktopConfig.KEY_DATE_SIZE, 24), 12, 48);
+        dateBoldCheck = styledCheck("日期粗体", prefs.getBoolean(DesktopConfig.KEY_DATE_BOLD, true));
+        root.addView(dateBoldCheck, matchWrap());
+
+        root.addView(label("电量组件"), matchWrap());
         desktopBatteryCheck = new CheckBox(this);
         desktopBatteryCheck.setText("显示电量");
         desktopBatteryCheck.setTextColor(Color.rgb(24, 32, 56));
         desktopBatteryCheck.setChecked(ClockPrefs.showDesktopBattery(prefs));
         root.addView(desktopBatteryCheck, matchWrap());
+        batteryColorEdit = addLabeledEdit(root, "电量颜色", prefs.getString(DesktopConfig.KEY_BATTERY_COLOR, "#B9FFFFFF"), InputType.TYPE_CLASS_TEXT);
+        batterySizeSeek = addSizeSeek(root, "电量字号", prefs.getInt(DesktopConfig.KEY_BATTERY_SIZE, 20), 12, 48);
+        batteryBoldCheck = styledCheck("电量粗体", prefs.getBoolean(DesktopConfig.KEY_BATTERY_BOLD, true));
+        root.addView(batteryBoldCheck, matchWrap());
 
+        root.addView(label("网速组件"), matchWrap());
+        desktopNetworkCheck = new CheckBox(this);
+        desktopNetworkCheck.setText("显示上下行网速");
+        desktopNetworkCheck.setTextColor(Color.rgb(24, 32, 56));
+        desktopNetworkCheck.setChecked(ClockPrefs.showDesktopNetwork(prefs));
+        root.addView(desktopNetworkCheck, matchWrap());
+        networkColorEdit = addLabeledEdit(root, "网速颜色", prefs.getString(DesktopConfig.KEY_NETWORK_COLOR, "#B9FFFFFF"), InputType.TYPE_CLASS_TEXT);
+        networkSizeSeek = addSizeSeek(root, "网速字号", prefs.getInt(DesktopConfig.KEY_NETWORK_SIZE, 18), 12, 48);
+        networkBoldCheck = styledCheck("网速粗体", prefs.getBoolean(DesktopConfig.KEY_NETWORK_BOLD, true));
+        root.addView(networkBoldCheck, matchWrap());
+
+        root.addView(label("CPU 面板"), matchWrap());
         desktopCpuCheck = new CheckBox(this);
         desktopCpuCheck.setText("显示 CPU 监控");
         desktopCpuCheck.setTextColor(Color.rgb(24, 32, 56));
         desktopCpuCheck.setChecked(ClockPrefs.showDesktopCpu(prefs));
         root.addView(desktopCpuCheck, matchWrap());
+        cpuWidthSeek = addSizeSeek(root, "CPU 面板宽度", prefs.getInt(DesktopConfig.KEY_CPU_WIDTH, 140), 100, 320);
+        cpuHeightSeek = addSizeSeek(root, "CPU 面板高度", prefs.getInt(DesktopConfig.KEY_CPU_HEIGHT, 258), 160, 420);
+        cpuAlphaSeek = addSizeSeek(root, "CPU 背景透明度", prefs.getInt(DesktopConfig.KEY_CPU_ALPHA, 100), 10, 100);
 
         cpuOverlayCheck = new CheckBox(this);
         cpuOverlayCheck.setText("悬浮窗显示 CPU 占用（可拖动）");
@@ -290,7 +348,9 @@ public class MainActivity extends AppCompatActivity {
         desktopShadowColorEdit.setOnFocusChangeListener(previewUpdater);
         desktopFormatEdit.setOnFocusChangeListener(previewUpdater);
         desktopBoldCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
+        desktopDateCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
         desktopBatteryCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
+        desktopNetworkCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
         desktopCpuCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
         cpuOverlayCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
             prefs.edit().putBoolean(ClockPrefs.KEY_CPU_OVERLAY, isChecked).commit();
@@ -300,12 +360,132 @@ public class MainActivity extends AppCompatActivity {
         pickShadowColorButton.setOnClickListener(v -> ColorPickerDialog.show(this, "选择桌面阴影颜色", desktopShadowColorEdit.getText().toString(), true, color -> { desktopShadowColorEdit.setText(color); updatePreview(); }));
     }
 
+    private CheckBox styledCheck(String text, boolean checked) {
+        CheckBox check = new CheckBox(this);
+        check.setText(text);
+        check.setTextColor(Color.rgb(24, 32, 56));
+        check.setChecked(checked);
+        return check;
+    }
+
+    private SeekBar addSizeSeek(LinearLayout root, String title, int value, int min, int max) {
+        TextView valueLabel = label(title + "：" + value);
+        root.addView(valueLabel, matchWrap());
+        SeekBar seek = new SeekBar(this);
+        seek.setMax(max - min);
+        seek.setProgress(Math.max(0, Math.min(max - min, value - min)));
+        seek.setTag(new int[]{min, max});
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                valueLabel.setText(title + "：" + (min + progress));
+                updatePreview();
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { }
+        });
+        root.addView(seek, matchWrap());
+        return seek;
+    }
+
+    private int seekValue(SeekBar seek, int defaultValue) {
+        if (seek == null || !(seek.getTag() instanceof int[])) return defaultValue;
+        return ((int[]) seek.getTag())[0] + seek.getProgress();
+    }
+
     private SeekBar.OnSeekBarChangeListener simpleSeekUpdater() {        return new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) { updatePreview(); }
             @Override public void onStartTrackingTouch(SeekBar seekBar) { }
             @Override public void onStopTrackingTouch(SeekBar seekBar) { }
         };
     }
+
+    private void buildPresetControls(LinearLayout root) {
+        root.addView(label("布局预设"), matchWrap());
+        desktopPresetSpinner = new Spinner(this);
+        desktopPresetAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
+                DesktopConfig.presetNames(prefs));
+        desktopPresetSpinner.setAdapter(desktopPresetAdapter);
+        root.addView(desktopPresetSpinner, matchWrap());
+
+        LinearLayout row1 = new LinearLayout(this);
+        row1.setOrientation(LinearLayout.HORIZONTAL);
+        Button save = secondaryButton("保存预设");
+        Button apply = secondaryButton("应用预设");
+        Button rename = secondaryButton("重命名");
+        Button delete = secondaryButton("删除");
+        row1.addView(save, weightWrap(1)); row1.addView(apply, weightWrap(1));
+        row1.addView(rename, weightWrap(1)); row1.addView(delete, weightWrap(1));
+        root.addView(row1, matchWrap());
+
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setOrientation(LinearLayout.HORIZONTAL);
+        Button export = secondaryButton("复制 JSON");
+        Button importButton = secondaryButton("导入 JSON");
+        row2.addView(export, weightWrap(1)); row2.addView(importButton, weightWrap(1));
+        root.addView(row2, matchWrap());
+
+        save.setOnClickListener(v -> promptText("保存预设", "预设名称", name -> {
+            if (!saveAllSettings(false)) return;
+            try { DesktopConfig.savePreset(prefs, name); refreshPresetSpinner(); toast("预设已保存"); }
+            catch (Exception e) { toast("保存失败：" + e.getMessage()); }
+        }));
+        apply.setOnClickListener(v -> {
+            int position = desktopPresetSpinner.getSelectedItemPosition();
+            if (position < 0) return;
+            try { DesktopConfig.applyPreset(prefs, position); recreate(); }
+            catch (Exception e) { toast("应用失败：" + e.getMessage()); }
+        });
+        rename.setOnClickListener(v -> {
+            int position = desktopPresetSpinner.getSelectedItemPosition();
+            if (position < 0) return;
+            promptText("重命名预设", "新名称", name -> {
+                try { DesktopConfig.renamePreset(prefs, position, name); refreshPresetSpinner(); }
+                catch (Exception e) { toast("重命名失败"); }
+            });
+        });
+        delete.setOnClickListener(v -> {
+            int position = desktopPresetSpinner.getSelectedItemPosition();
+            if (position < 0) return;
+            try { DesktopConfig.deletePreset(prefs, position); refreshPresetSpinner(); }
+            catch (Exception e) { toast("删除失败"); }
+        });
+        export.setOnClickListener(v -> {
+            try {
+                String json = DesktopConfig.exportAll(prefs);
+                ((ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("桌面时钟预设", json));
+                toast("JSON 已复制到剪贴板");
+            } catch (Exception e) { toast("导出失败"); }
+        });
+        importButton.setOnClickListener(v -> promptText("导入 JSON", "粘贴导出的 JSON", json -> {
+            try { DesktopConfig.importAll(prefs, json); toast("导入成功"); recreate(); }
+            catch (Exception e) { Toast.makeText(this, "导入失败：JSON 无效", Toast.LENGTH_LONG).show(); }
+        }, true));
+    }
+
+    private interface TextCallback { void accept(String value); }
+
+    private void promptText(String title, String hint, TextCallback callback) { promptText(title, hint, callback, false); }
+
+    private void promptText(String title, String hint, TextCallback callback, boolean multiline) {
+        EditText input = new EditText(this);
+        input.setHint(hint);
+        input.setSingleLine(!multiline);
+        if (multiline) input.setMinLines(8);
+        new AlertDialog.Builder(this).setTitle(title).setView(input)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确定", (d, w) -> {
+                    String value = input.getText().toString().trim();
+                    if (!value.isEmpty()) callback.accept(value); else toast("内容不能为空");
+                }).show();
+    }
+
+    private void refreshPresetSpinner() {
+        desktopPresetAdapter.clear();
+        desktopPresetAdapter.addAll(DesktopConfig.presetNames(prefs));
+        desktopPresetAdapter.notifyDataSetChanged();
+    }
+
+    private void toast(String text) { Toast.makeText(this, text, Toast.LENGTH_SHORT).show(); }
 
     private void showTab(boolean desktop) {
         showingDesktopTab = desktop;
@@ -340,6 +520,9 @@ public class MainActivity extends AppCompatActivity {
         String desktopTextColor = desktopTextColorEdit.getText().toString().trim();
         String desktopShadowColor = desktopShadowColorEdit.getText().toString().trim();
         String desktopFormat = ClockPrefs.stripMilliseconds(desktopFormatEdit.getText().toString().trim());
+        String dateColor = dateColorEdit.getText().toString().trim();
+        String batteryColor = batteryColorEdit.getText().toString().trim();
+        String networkColor = networkColorEdit.getText().toString().trim();
         if (format.isEmpty()) format = ClockPrefs.DEFAULT_FORMAT;
         if (desktopFormat.isEmpty()) desktopFormat = ClockPrefs.DEFAULT_DESKTOP_FORMAT;
         try {
@@ -347,6 +530,9 @@ public class MainActivity extends AppCompatActivity {
             Color.parseColor(shadowColor);
             Color.parseColor(desktopTextColor);
             Color.parseColor(desktopShadowColor);
+            Color.parseColor(dateColor);
+            Color.parseColor(batteryColor);
+            Color.parseColor(networkColor);
             ClockPrefs.validateFormat(format);
             ClockPrefs.validateFormat(desktopFormat);
         } catch (IllegalArgumentException e) {
@@ -365,8 +551,22 @@ public class MainActivity extends AppCompatActivity {
                 .putInt(ClockPrefs.KEY_DESKTOP_TEXT_SIZE, currentDesktopSize())
                 .putString(ClockPrefs.KEY_DESKTOP_FORMAT, desktopFormat)
                 .putBoolean(ClockPrefs.KEY_DESKTOP_BOLD, desktopBoldCheck.isChecked())
+                .putBoolean(DesktopConfig.KEY_SHOW_DATE, desktopDateCheck.isChecked())
+                .putString(DesktopConfig.KEY_DATE_COLOR, dateColor)
+                .putInt(DesktopConfig.KEY_DATE_SIZE, seekValue(dateSizeSeek, 24))
+                .putBoolean(DesktopConfig.KEY_DATE_BOLD, dateBoldCheck.isChecked())
                 .putBoolean(ClockPrefs.KEY_DESKTOP_SHOW_BATTERY, desktopBatteryCheck.isChecked())
+                .putString(DesktopConfig.KEY_BATTERY_COLOR, batteryColor)
+                .putInt(DesktopConfig.KEY_BATTERY_SIZE, seekValue(batterySizeSeek, 20))
+                .putBoolean(DesktopConfig.KEY_BATTERY_BOLD, batteryBoldCheck.isChecked())
+                .putBoolean(ClockPrefs.KEY_DESKTOP_SHOW_NETWORK, desktopNetworkCheck.isChecked())
+                .putString(DesktopConfig.KEY_NETWORK_COLOR, networkColor)
+                .putInt(DesktopConfig.KEY_NETWORK_SIZE, seekValue(networkSizeSeek, 18))
+                .putBoolean(DesktopConfig.KEY_NETWORK_BOLD, networkBoldCheck.isChecked())
                 .putBoolean(ClockPrefs.KEY_DESKTOP_SHOW_CPU, desktopCpuCheck.isChecked())
+                .putInt(DesktopConfig.KEY_CPU_WIDTH, seekValue(cpuWidthSeek, 140))
+                .putInt(DesktopConfig.KEY_CPU_HEIGHT, seekValue(cpuHeightSeek, 258))
+                .putInt(DesktopConfig.KEY_CPU_ALPHA, seekValue(cpuAlphaSeek, 100))
                 .putBoolean(ClockPrefs.KEY_CPU_OVERLAY, cpuOverlayCheck.isChecked())
                 .commit();
         updatePreview();
@@ -430,7 +630,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateDesktopPreview() {
         if (desktopSizeLabel != null) desktopSizeLabel.setText("桌面字体大小：" + currentDesktopSize() + "sp");
-        preview.setText(desktopBatteryCheck != null && desktopBatteryCheck.isChecked() ? "12:34:56  ·  电量 88%" : "12:34:56");
+        StringBuilder previewText = new StringBuilder("12:34:56");
+        if (desktopDateCheck != null && desktopDateCheck.isChecked()) previewText.append("\n2026-01-01 星期四");
+        if (desktopBatteryCheck != null && desktopBatteryCheck.isChecked()) previewText.append("  ·  电量 88%");
+        if (desktopNetworkCheck != null && desktopNetworkCheck.isChecked()) previewText.append("\n↓ 1.2 MB/s\n↑ 128 KB/s");
+        preview.setText(previewText.toString());
         preview.setTextSize(Math.min(72, currentDesktopSize()));
         preview.setTypeface(Typeface.DEFAULT, desktopBoldCheck != null && desktopBoldCheck.isChecked() ? Typeface.BOLD : Typeface.NORMAL);
         applyPreviewColors(desktopTextColorEdit, desktopShadowColorEdit);

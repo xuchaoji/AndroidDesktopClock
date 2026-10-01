@@ -39,6 +39,7 @@ public class CpuMonitorView extends View {
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<float[]> history = new ArrayList<>();
+    private int panelAlphaPercent = 100;
     private int dataSource = SOURCE_UNKNOWN;
     private String statusText = "初始化";
 
@@ -52,6 +53,8 @@ public class CpuMonitorView extends View {
     private double[] curFreqKhz;
 
     private int coreCount;
+    private float cpuTemperatureC = Float.NaN;
+    private String cpuTemperatureSource;
     private int[] coreOrder;
     private long[] coreMaxFreqs;
     private boolean[] coreIsBig;
@@ -62,8 +65,14 @@ public class CpuMonitorView extends View {
         paint.setStrokeCap(Paint.Cap.ROUND);
     }
 
+    public void setPanelAlpha(int percent) {
+        panelAlphaPercent = Math.max(10, Math.min(100, percent));
+        invalidate();
+    }
+
     public void sample() {
         if (dataSource == SOURCE_UNKNOWN) detectDataSource();
+        sampleCpuTemperature();
 
         float[] values;
         switch (dataSource) {
@@ -316,6 +325,54 @@ public class CpuMonitorView extends View {
         }
     }
 
+    /**
+     * 从 thermal_zone 中挑选 CPU 相关传感器。部分设备提供多个核心/簇温度，
+     * 这里显示其中最高值，便于及时反映最热核心；过滤明显异常的传感器数值。
+     */
+    private void sampleCpuTemperature() {
+        File thermalRoot = new File("/sys/class/thermal");
+        File[] zones = thermalRoot.listFiles();
+        float hottest = Float.NaN;
+        String hottestType = null;
+        if (zones != null) {
+            for (File zone : zones) {
+                if (zone == null || !zone.getName().startsWith("thermal_zone")) continue;
+                String typeContent = readTextFile(new File(zone, "type").getAbsolutePath());
+                if (typeContent == null) continue;
+                String type = typeContent.trim().toLowerCase(Locale.US);
+                if (!isCpuThermalType(type)) continue;
+                long raw = readLongFile(new File(zone, "temp").getAbsolutePath());
+                float value = normalizeTemperature(raw);
+                if (Float.isNaN(value)) continue;
+                if (Float.isNaN(hottest) || value > hottest) {
+                    hottest = value;
+                    hottestType = typeContent.trim();
+                }
+            }
+        }
+        cpuTemperatureC = hottest;
+        cpuTemperatureSource = hottestType;
+    }
+
+    private boolean isCpuThermalType(String type) {
+        if (type == null || type.isEmpty()) return false;
+        if (type.contains("cpu") || type.contains("cpuss") || type.contains("soc")) return true;
+        return type.contains("ap") && (type.contains("therm") || type.contains("temp"));
+    }
+
+    private float normalizeTemperature(long raw) {
+        if (raw <= 0L) return Float.NaN;
+        double value = raw;
+        while (value > 200d) value /= 1000d;
+        if (value < -20d || value > 150d) return Float.NaN;
+        return (float) value;
+    }
+
+    private String temperatureText() {
+        if (Float.isNaN(cpuTemperatureC)) return "温度 --";
+        return String.format(Locale.getDefault(), "温度 %.1f℃", cpuTemperatureC);
+    }
+
     private void close(BufferedReader br) {
         try { if (br != null) br.close(); } catch (Exception ignored) { }
     }
@@ -437,12 +494,7 @@ public class CpuMonitorView extends View {
     }
 
     private String buildTitle() {
-        if (coreCount <= 0) return "CPU";
-        int bigCount = 0;
-        for (int i = 0; i < coreCount; i++) if (isBig(i)) bigCount++;
-        int smallCount = coreCount - bigCount;
-        if (smallCount <= 0) return "CPU " + bigCount + "核";
-        return "CPU " + bigCount + "大+" + smallCount + "小";
+        return "CPU";
     }
 
     // ---------------------------------------------------------------- 无障碍与日志
@@ -473,6 +525,8 @@ public class CpuMonitorView extends View {
                 sb.append(Math.round(values[i] * 100)).append('%');
             }
         }
+        sb.append(' ').append(temperatureText());
+        if (cpuTemperatureSource != null) sb.append('(').append(cpuTemperatureSource).append(')');
         return sb.toString();
     }
 
@@ -491,7 +545,7 @@ public class CpuMonitorView extends View {
         if (w <= 0 || h <= 0) return;
 
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(72, 18, 24, 36));
+        paint.setColor(Color.argb(Math.round(72 * panelAlphaPercent / 100f), 18, 24, 36));
         canvas.drawRoundRect(0, 0, w, h, dp(14), dp(14), paint);
 
         if (coreCount > 0) ensureCoreInfo();
@@ -500,6 +554,10 @@ public class CpuMonitorView extends View {
         paint.setTextSize(dp(11));
         paint.setFakeBoldText(true);
         canvas.drawText(buildTitle(), dp(9), dp(14), paint);
+        paint.setTextAlign(Paint.Align.RIGHT);
+        paint.setColor(temperatureColor());
+        canvas.drawText(temperatureText(), w - dp(9), dp(14), paint);
+        paint.setTextAlign(Paint.Align.LEFT);
         paint.setFakeBoldText(false);
 
         if (coreCount <= 0) {
@@ -604,6 +662,13 @@ public class CpuMonitorView extends View {
         if (history.isEmpty()) return 0f;
         float[] values = history.get(history.size() - 1);
         return core < values.length ? values[core] : 0f;
+    }
+
+    private int temperatureColor() {
+        if (Float.isNaN(cpuTemperatureC)) return Color.argb(150, 255, 255, 255);
+        if (cpuTemperatureC >= 80f) return Color.rgb(255, 90, 90);
+        if (cpuTemperatureC >= 65f) return Color.rgb(255, 190, 90);
+        return Color.rgb(120, 230, 190);
     }
 
     private int colorForCore(int core) {
