@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.TrafficStats;
@@ -184,12 +185,14 @@ public class DesktopClockActivity extends AppCompatActivity {
         root.addView(clockView, params);
 
         dateView = new TextView(this);
+        dateView.setSingleLine(true);
+        dateView.setMaxLines(1);
         dateView.setText("0000-00-00");
         dateView.setTextColor(Color.argb(210, 255, 255, 255));
         dateView.setTextSize(24);
         dateView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        dateView.setGravity(Gravity.END);
-        dateView.setPadding(dp(8), dp(6), dp(8), dp(6));
+        dateView.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        dateView.setPadding(dp(8), dp(4), dp(8), dp(4));
         FrameLayout.LayoutParams dateParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END);
@@ -197,12 +200,14 @@ public class DesktopClockActivity extends AppCompatActivity {
         root.addView(dateView, dateParams);
 
         batteryView = new TextView(this);
-        batteryView.setText("电量 --%");
+        batteryView.setSingleLine(true);
+        batteryView.setMaxLines(1);
+        batteryView.setText("电量\u00A0--%");
         batteryView.setTextColor(Color.argb(190, 255, 255, 255));
         batteryView.setTextSize(20);
         batteryView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        batteryView.setGravity(Gravity.END);
-        batteryView.setPadding(dp(8), dp(6), dp(8), dp(6));
+        batteryView.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        batteryView.setPadding(dp(8), dp(4), dp(8), dp(4));
         FrameLayout.LayoutParams batteryParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END);
@@ -386,7 +391,7 @@ public class DesktopClockActivity extends AppCompatActivity {
         if (batteryView == null || !showBattery) return;
         Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         if (battery == null) {
-            batteryView.setText("电量 --%");
+            batteryView.setText("电量\u00A0--%");
             return;
         }
         int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
@@ -394,7 +399,31 @@ public class DesktopClockActivity extends AppCompatActivity {
         int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
         int percent = scale > 0 && level >= 0 ? Math.round(level * 100f / scale) : -1;
         boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL;
-        batteryView.setText((charging ? "⚡ " : "") + "电量 " + (percent >= 0 ? percent + "%" : "--%"));
+        String text = (charging ? "⚡ " : "") + "电量\u00A0" + (percent >= 0 ? percent + "%" : "--%");
+        Log.i("FloatingClockBattery", "updateBattery: level=" + level + " scale=" + scale + " status=" + status + " -> setText: [" + text + "]");
+        batteryView.setText(text);
+        adjustViewBoundsIfExceeded(batteryView, DesktopConfig.COMPONENT_BATTERY);
+    }
+
+    private void adjustViewBoundsIfExceeded(View view, String component) {
+        if (view == null || root == null || root.getWidth() <= 0) return;
+        if (!DesktopConfig.hasPosition(prefs, component)) return;
+        view.post(() -> {
+            int vw = getViewWidth(view);
+            int vh = getViewHeight(view);
+            if (vw <= 0 || vh <= 0) return;
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) view.getLayoutParams();
+            if (lp.gravity != (Gravity.TOP | Gravity.START)) return;
+            float ratioX = clamp(DesktopConfig.getX(prefs, component), 0f, 1f);
+            float ratioY = clamp(DesktopConfig.getY(prefs, component), 0f, 1f);
+            float maxX = Math.max(0, root.getWidth() - vw);
+            float maxY = Math.max(0, root.getHeight() - vh);
+            float expectedX = ratioX * maxX;
+            float expectedY = ratioY * maxY;
+            if (Math.abs(lp.leftMargin - expectedX) > 1 || Math.abs(lp.topMargin - expectedY) > 1) {
+                setBasePosition(view, expectedX, expectedY);
+            }
+        });
     }
 
     private void resetNetworkSample() {
@@ -455,6 +484,10 @@ public class DesktopClockActivity extends AppCompatActivity {
         boolean bold = prefs.getBoolean(boldKey, true);
         view.setTypeface(monospace ? Typeface.MONOSPACE : Typeface.DEFAULT,
                 bold ? Typeface.BOLD : Typeface.NORMAL);
+        if (view != networkView) {
+            view.setSingleLine(true);
+            view.setMaxLines(1);
+        }
     }
 
     private int adjustAlpha(int color, int alpha) {
@@ -504,6 +537,15 @@ public class DesktopClockActivity extends AppCompatActivity {
 
     private int getViewWidth(View view) {
         if (view == null) return 0;
+        if (view instanceof TextView && view != networkView) {
+            TextView tv = (TextView) view;
+            CharSequence cs = tv.getText();
+            if (cs != null && cs.length() > 0) {
+                float textW = tv.getPaint().measureText(cs.toString());
+                int paddingW = tv.getCompoundPaddingLeft() + tv.getCompoundPaddingRight();
+                return (int) Math.ceil(textW + paddingW);
+            }
+        }
         int w = view.getWidth();
         if (w > 0) return w;
         w = view.getMeasuredWidth();
@@ -519,6 +561,13 @@ public class DesktopClockActivity extends AppCompatActivity {
 
     private int getViewHeight(View view) {
         if (view == null) return 0;
+        if (view instanceof TextView && view != networkView) {
+            TextView tv = (TextView) view;
+            Paint.FontMetrics fm = tv.getPaint().getFontMetrics();
+            float textH = fm.bottom - fm.top;
+            int paddingH = tv.getCompoundPaddingTop() + tv.getCompoundPaddingBottom();
+            return (int) Math.ceil(textH + paddingH);
+        }
         int h = view.getHeight();
         if (h > 0) return h;
         h = view.getMeasuredHeight();
@@ -668,6 +717,8 @@ public class DesktopClockActivity extends AppCompatActivity {
         lp.gravity = Gravity.TOP | Gravity.START;
         lp.leftMargin = Math.round(x);
         lp.topMargin = Math.round(y);
+        lp.rightMargin = 0;
+        lp.bottomMargin = 0;
         view.setLayoutParams(lp);
     }
 
