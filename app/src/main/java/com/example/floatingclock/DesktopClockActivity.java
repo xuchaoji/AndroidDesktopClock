@@ -265,10 +265,6 @@ public class DesktopClockActivity extends AppCompatActivity {
         if (editMode) buildEditToolbar();
         root.setOnTouchListener(editMode ? null : this::handleRootTouch);
         setContentView(root);
-        root.post(() -> {
-            restoreComponentPositions();
-            if (editMode) enableLayoutEditing();
-        });
     }
 
     private void applySettings() {
@@ -350,7 +346,11 @@ public class DesktopClockActivity extends AppCompatActivity {
         }
         root.post(() -> {
             restoreComponentPositions();
-            if (!editMode) moveClockSlightly();
+            if (editMode) {
+                enableLayoutEditing();
+            } else {
+                root.post(this::moveClockSlightly);
+            }
         });
     }
 
@@ -463,25 +463,73 @@ public class DesktopClockActivity extends AppCompatActivity {
 
     private void animateBurnInSafely(View view, int desiredMaxX, int desiredMaxY, int step) {
         if (view == null || view.getVisibility() != View.VISIBLE || root == null) return;
-        if (view.getWidth() <= 0 || view.getHeight() <= 0) return;
+        if (root.getWidth() <= 0 || root.getHeight() <= 0) return;
+        int vw = getViewWidth(view);
+        int vh = getViewHeight(view);
+        if (vw <= 0 || vh <= 0) return;
 
-        // getLeft/getTop 是布局后的稳定基准位置，不包含 translation；同时兼容居中、靠边等 gravity。
-        float baseLeft = view.getLeft();
-        float baseTop = view.getTop();
+        // 如果之前的位移异常偏大（如异常越界残留），立即重置为 0，防止长时间动画漂移
+        float curTransX = view.getTranslationX();
+        float curTransY = view.getTranslationY();
+        if (Math.abs(curTransX) > desiredMaxX * 2f) {
+            view.setTranslationX(0f);
+            curTransX = 0f;
+        }
+        if (Math.abs(curTransY) > desiredMaxY * 2f) {
+            view.setTranslationY(0f);
+            curTransY = 0f;
+        }
+
+        // 基准位置优先取 LayoutParams 设置的边距，兼容未完成 layout pass 的情况
+        float baseLeft = baseX(view);
+        float baseTop = baseY(view);
         float minDx = -baseLeft;
-        float maxDx = root.getWidth() - view.getWidth() - baseLeft;
+        float maxDx = root.getWidth() - vw - baseLeft;
         float minDy = -baseTop;
-        float maxDy = root.getHeight() - view.getHeight() - baseTop;
+        float maxDy = root.getHeight() - vh - baseTop;
 
         minDx = Math.max(minDx, -desiredMaxX);
         maxDx = Math.min(maxDx, desiredMaxX);
         minDy = Math.max(minDy, -desiredMaxY);
         maxDy = Math.min(maxDy, desiredMaxY);
 
-        float targetX = nextSafeOffset(view.getTranslationX(), minDx, maxDx, step);
-        float targetY = nextSafeOffset(view.getTranslationY(), minDy, maxDy, step);
+        if (minDx > maxDx) { minDx = 0f; maxDx = 0f; }
+        if (minDy > maxDy) { minDy = 0f; maxDy = 0f; }
+
+        float targetX = nextSafeOffset(curTransX, minDx, maxDx, step);
+        float targetY = nextSafeOffset(curTransY, minDy, maxDy, step);
         view.animate().translationX(targetX).translationY(targetY)
                 .setDuration(BURN_IN_ANIMATION_MS).start();
+    }
+
+    private int getViewWidth(View view) {
+        if (view == null) return 0;
+        int w = view.getWidth();
+        if (w > 0) return w;
+        w = view.getMeasuredWidth();
+        if (w > 0) return w;
+        if (root != null && root.getWidth() > 0 && root.getHeight() > 0) {
+            view.measure(
+                    View.MeasureSpec.makeMeasureSpec(root.getWidth(), View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(root.getHeight(), View.MeasureSpec.AT_MOST));
+            return view.getMeasuredWidth();
+        }
+        return 0;
+    }
+
+    private int getViewHeight(View view) {
+        if (view == null) return 0;
+        int h = view.getHeight();
+        if (h > 0) return h;
+        h = view.getMeasuredHeight();
+        if (h > 0) return h;
+        if (root != null && root.getWidth() > 0 && root.getHeight() > 0) {
+            view.measure(
+                    View.MeasureSpec.makeMeasureSpec(root.getWidth(), View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(root.getHeight(), View.MeasureSpec.AT_MOST));
+            return view.getMeasuredHeight();
+        }
+        return 0;
     }
 
     private float nextSafeOffset(float current, float min, float max, int step) {
@@ -544,16 +592,21 @@ public class DesktopClockActivity extends AppCompatActivity {
     }
 
     private void pinCurrentPosition(View view) {
-        if (view == null) return;
-        float x = view.getX();
-        float y = view.getY();
+        if (view == null || root == null) return;
         view.animate().cancel();
         view.setTranslationX(0f);
         view.setTranslationY(0f);
-        setBasePosition(view, x, y);
+        float curX = baseX(view);
+        float curY = baseY(view);
+        int vw = getViewWidth(view);
+        int vh = getViewHeight(view);
+        float maxX = Math.max(0, root.getWidth() - vw);
+        float maxY = Math.max(0, root.getHeight() - vh);
+        setBasePosition(view, clamp(curX, 0, maxX), clamp(curY, 0, maxY));
     }
 
     private void attachDrag(View view, String component) {
+        if (view == null) return;
         view.animate().cancel();
         view.setTranslationX(0f);
         view.setTranslationY(0f);
@@ -567,20 +620,37 @@ public class DesktopClockActivity extends AppCompatActivity {
             @Override public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
-                        downRawX = event.getRawX(); downRawY = event.getRawY();
-                        startX = baseX(v); startY = baseY(v);
+                        downRawX = event.getRawX();
+                        downRawY = event.getRawY();
+                        startX = baseX(v);
+                        startY = baseY(v);
+                        v.animate().cancel();
+                        v.setTranslationX(0f);
+                        v.setTranslationY(0f);
                         v.bringToFront();
                         if (editToolbar != null) editToolbar.bringToFront();
                         return true;
                     case MotionEvent.ACTION_MOVE:
-                        float x = startX + event.getRawX() - downRawX;
-                        float y = startY + event.getRawY() - downRawY;
-                        setBasePosition(v,
-                                clamp(x, 0, Math.max(0, root.getWidth() - v.getWidth())),
-                                clamp(y, 0, Math.max(0, root.getHeight() - v.getHeight())));
+                        int vw = getViewWidth(v);
+                        int vh = getViewHeight(v);
+                        float maxX = Math.max(0, root.getWidth() - vw);
+                        float maxY = Math.max(0, root.getHeight() - vh);
+                        float newX = clamp(startX + event.getRawX() - downRawX, 0, maxX);
+                        float newY = clamp(startY + event.getRawY() - downRawY, 0, maxY);
+                        v.setTranslationX(newX - startX);
+                        v.setTranslationY(newY - startY);
                         return true;
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
+                        int finalVw = getViewWidth(v);
+                        int finalVh = getViewHeight(v);
+                        float finalMaxX = Math.max(0, root.getWidth() - finalVw);
+                        float finalMaxY = Math.max(0, root.getHeight() - finalVh);
+                        float finalX = clamp(startX + event.getRawX() - downRawX, 0, finalMaxX);
+                        float finalY = clamp(startY + event.getRawY() - downRawY, 0, finalMaxY);
+                        v.setTranslationX(0f);
+                        v.setTranslationY(0f);
+                        setBasePosition(v, finalX, finalY);
                         saveComponentPosition(v, component);
                         return true;
                     default: return true;
@@ -590,31 +660,50 @@ public class DesktopClockActivity extends AppCompatActivity {
     }
 
     private void setBasePosition(View view, float x, float y) {
+        if (view == null) return;
+        view.animate().cancel();
+        view.setTranslationX(0f);
+        view.setTranslationY(0f);
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) view.getLayoutParams();
         lp.gravity = Gravity.TOP | Gravity.START;
         lp.leftMargin = Math.round(x);
         lp.topMargin = Math.round(y);
         view.setLayoutParams(lp);
-        view.setX(lp.leftMargin);
-        view.setY(lp.topMargin);
     }
 
     private float baseX(View view) {
-        return ((FrameLayout.LayoutParams) view.getLayoutParams()).leftMargin;
+        if (view == null) return 0f;
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) view.getLayoutParams();
+        if (lp != null && lp.gravity == (Gravity.TOP | Gravity.START)) {
+            return lp.leftMargin;
+        }
+        return view.getLeft();
     }
 
     private float baseY(View view) {
-        return ((FrameLayout.LayoutParams) view.getLayoutParams()).topMargin;
+        if (view == null) return 0f;
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) view.getLayoutParams();
+        if (lp != null && lp.gravity == (Gravity.TOP | Gravity.START)) {
+            return lp.topMargin;
+        }
+        return view.getTop();
     }
 
     private void saveComponentPosition(View view, String component) {
-        float maxX = Math.max(1f, root.getWidth() - view.getWidth());
-        float maxY = Math.max(1f, root.getHeight() - view.getHeight());
-        DesktopConfig.savePosition(prefs, component, baseX(view) / maxX, baseY(view) / maxY);
+        if (view == null || root == null) return;
+        int vw = getViewWidth(view);
+        int vh = getViewHeight(view);
+        float maxX = Math.max(1f, root.getWidth() - vw);
+        float maxY = Math.max(1f, root.getHeight() - vh);
+        float curX = baseX(view);
+        float curY = baseY(view);
+        DesktopConfig.savePosition(prefs, component,
+                clamp(curX / maxX, 0f, 1f),
+                clamp(curY / maxY, 0f, 1f));
     }
 
     private void restoreComponentPositions() {
-        if (root == null || root.getWidth() <= 0) return;
+        if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return;
         restorePosition(clockView, DesktopConfig.COMPONENT_CLOCK);
         restorePosition(dateView, DesktopConfig.COMPONENT_DATE);
         restorePosition(batteryView, DesktopConfig.COMPONENT_BATTERY);
@@ -625,11 +714,16 @@ public class DesktopClockActivity extends AppCompatActivity {
     }
 
     private void restorePosition(View view, String component) {
-        if (view == null || !DesktopConfig.hasPosition(prefs, component)) return;
-        pinCurrentPosition(view);
-        setBasePosition(view,
-                DesktopConfig.getX(prefs, component) * Math.max(0, root.getWidth() - view.getWidth()),
-                DesktopConfig.getY(prefs, component) * Math.max(0, root.getHeight() - view.getHeight()));
+        if (view == null || root == null || !DesktopConfig.hasPosition(prefs, component)) return;
+        int vw = getViewWidth(view);
+        int vh = getViewHeight(view);
+        float maxX = Math.max(0, root.getWidth() - vw);
+        float maxY = Math.max(0, root.getHeight() - vh);
+        float ratioX = clamp(DesktopConfig.getX(prefs, component), 0f, 1f);
+        float ratioY = clamp(DesktopConfig.getY(prefs, component), 0f, 1f);
+        float targetX = clamp(ratioX * maxX, 0, maxX);
+        float targetY = clamp(ratioY * maxY, 0, maxY);
+        setBasePosition(view, targetX, targetY);
     }
 
     private void resetComponentPositions() {
