@@ -64,6 +64,15 @@ public class MainActivity extends AppCompatActivity {
     private CheckBox dateBoldCheck;
     private CheckBox batteryBoldCheck;
     private CheckBox networkBoldCheck;
+    private CheckBox desktopWeatherCheck;
+    private EditText weatherCityEdit;
+    private Spinner weatherModeSpinner;
+    private EditText weatherColorEdit;
+    private SeekBar weatherSizeSeek;
+    private SeekBar weatherWidthSeek;
+    private SeekBar weatherHeightSeek;
+    private SeekBar weatherAlphaSeek;
+    private CheckBox weatherBoldCheck;
     private Spinner desktopPresetSpinner;
     private ArrayAdapter<String> desktopPresetAdapter;
 
@@ -318,6 +327,76 @@ public class MainActivity extends AppCompatActivity {
         cpuHeightSeek = addSizeSeek(root, "CPU 面板高度", prefs.getInt(DesktopConfig.KEY_CPU_HEIGHT, 258), 160, 420);
         cpuAlphaSeek = addSizeSeek(root, "CPU 背景透明度", prefs.getInt(DesktopConfig.KEY_CPU_ALPHA, 100), 10, 100);
 
+        root.addView(label("天气组件 (Open-Meteo 免Key)"), matchWrap());
+        desktopWeatherCheck = styledCheck("显示天气组件", prefs.getBoolean(DesktopConfig.KEY_SHOW_WEATHER, true));
+        root.addView(desktopWeatherCheck, matchWrap());
+        weatherCityEdit = addLabeledEdit(root, "天气城市", prefs.getString(DesktopConfig.KEY_WEATHER_CITY, "北京"), InputType.TYPE_CLASS_TEXT);
+        Button queryCityButton = secondaryButton("查询城市经纬度");
+        root.addView(queryCityButton, matchWrap());
+        queryCityButton.setOnClickListener(v -> {
+            String city = weatherCityEdit.getText().toString().trim();
+            if (city.isEmpty()) {
+                toast("请输入城市名称，例如：北京、深圳、上海");
+                return;
+            }
+            toast("正在查询 " + city + " 经纬度...");
+            WeatherManager.searchCity(city, new WeatherManager.CitySearchCallback() {
+                @Override
+                public void onSuccess(String cityName, float lat, float lon) {
+                    prefs.edit()
+                            .putString(DesktopConfig.KEY_WEATHER_CITY, cityName)
+                            .putFloat(DesktopConfig.KEY_WEATHER_LAT, lat)
+                            .putFloat(DesktopConfig.KEY_WEATHER_LON, lon)
+                            .apply();
+                    weatherCityEdit.setText(cityName);
+                    toast(String.format(java.util.Locale.getDefault(), "已绑定: %s (%.2f, %.2f)", cityName, lat, lon));
+                    WeatherManager.fetchWeather(MainActivity.this, lat, lon, true, new WeatherManager.WeatherCallback() {
+                        @Override public void onSuccess(String json) { toast("天气数据已刷新"); updatePreview(); }
+                        @Override public void onError(String msg) { }
+                    });
+                }
+                @Override
+                public void onError(String message) { toast(message); }
+            });
+        });
+
+        Button refreshWeatherButton = secondaryButton("立即刷新天气缓存");
+        root.addView(refreshWeatherButton, matchWrap());
+        refreshWeatherButton.setOnClickListener(v -> {
+            float lat = prefs.getFloat(DesktopConfig.KEY_WEATHER_LAT, 39.9042f);
+            float lon = prefs.getFloat(DesktopConfig.KEY_WEATHER_LON, 116.4074f);
+            toast("正在获取最新天气...");
+            WeatherManager.fetchWeather(this, lat, lon, true, new WeatherManager.WeatherCallback() {
+                @Override
+                public void onSuccess(String json) {
+                    toast("天气已更新");
+                    updatePreview();
+                }
+                @Override
+                public void onError(String message) {
+                    toast("更新失败: " + message);
+                }
+            });
+        });
+
+        root.addView(label("默认展示卡片 (桌面点击卡片可直接切换)"), matchWrap());
+        weatherModeSpinner = new Spinner(this);
+        String[] cardModeNames = new String[]{"三日对比卡片 (昨/今/明)", "逐小时走势卡片 (前/现/未来)"};
+        weatherModeSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, cardModeNames));
+        weatherModeSpinner.setSelection(Math.max(0, Math.min(cardModeNames.length - 1, prefs.getInt(DesktopConfig.KEY_WEATHER_MODE, 0))));
+        root.addView(weatherModeSpinner, matchWrap());
+
+        weatherWidthSeek = addSizeSeek(root, "天气卡片宽度", prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 360), 240, 520);
+        weatherHeightSeek = addSizeSeek(root, "天气卡片高度", prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 168), 120, 260);
+        weatherAlphaSeek = addSizeSeek(root, "天气卡片透明度", prefs.getInt(DesktopConfig.KEY_WEATHER_ALPHA, 100), 10, 100);
+
+        weatherColorEdit = addLabeledEdit(root, "天气文字颜色", prefs.getString(DesktopConfig.KEY_WEATHER_COLOR, "#D2FFFFFF"), InputType.TYPE_CLASS_TEXT);
+        Button pickWeatherColorButton = secondaryButton("选择天气文字颜色");
+        root.addView(pickWeatherColorButton, matchWrap());
+        pickWeatherColorButton.setOnClickListener(v -> ColorPickerDialog.show(this, "选择天气文字颜色", weatherColorEdit.getText().toString(), false, color -> { weatherColorEdit.setText(color); updatePreview(); }));
+        weatherBoldCheck = styledCheck("天气粗体", prefs.getBoolean(DesktopConfig.KEY_WEATHER_BOLD, true));
+        root.addView(weatherBoldCheck, matchWrap());
+
         cpuOverlayCheck = new CheckBox(this);
         cpuOverlayCheck.setText("悬浮窗显示 CPU 占用（可拖动）");
         cpuOverlayCheck.setTextColor(Color.rgb(24, 32, 56));
@@ -352,6 +431,7 @@ public class MainActivity extends AppCompatActivity {
         desktopBatteryCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
         desktopNetworkCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
         desktopCpuCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
+        desktopWeatherCheck.setOnCheckedChangeListener((buttonView, isChecked) -> updatePreview());
         cpuOverlayCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
             prefs.edit().putBoolean(ClockPrefs.KEY_CPU_OVERLAY, isChecked).commit();
             syncCpuOverlay(true);
@@ -523,6 +603,9 @@ public class MainActivity extends AppCompatActivity {
         String dateColor = dateColorEdit.getText().toString().trim();
         String batteryColor = batteryColorEdit.getText().toString().trim();
         String networkColor = networkColorEdit.getText().toString().trim();
+        String weatherCity = weatherCityEdit != null ? weatherCityEdit.getText().toString().trim() : "北京";
+        String weatherColor = weatherColorEdit != null ? weatherColorEdit.getText().toString().trim() : "#D2FFFFFF";
+        if (weatherCity.isEmpty()) weatherCity = "北京";
         if (format.isEmpty()) format = ClockPrefs.DEFAULT_FORMAT;
         if (desktopFormat.isEmpty()) desktopFormat = ClockPrefs.DEFAULT_DESKTOP_FORMAT;
         try {
@@ -533,6 +616,7 @@ public class MainActivity extends AppCompatActivity {
             Color.parseColor(dateColor);
             Color.parseColor(batteryColor);
             Color.parseColor(networkColor);
+            Color.parseColor(weatherColor);
             ClockPrefs.validateFormat(format);
             ClockPrefs.validateFormat(desktopFormat);
         } catch (IllegalArgumentException e) {
@@ -567,6 +651,14 @@ public class MainActivity extends AppCompatActivity {
                 .putInt(DesktopConfig.KEY_CPU_WIDTH, seekValue(cpuWidthSeek, 140))
                 .putInt(DesktopConfig.KEY_CPU_HEIGHT, seekValue(cpuHeightSeek, 258))
                 .putInt(DesktopConfig.KEY_CPU_ALPHA, seekValue(cpuAlphaSeek, 100))
+                .putBoolean(DesktopConfig.KEY_SHOW_WEATHER, desktopWeatherCheck != null && desktopWeatherCheck.isChecked())
+                .putString(DesktopConfig.KEY_WEATHER_CITY, weatherCity)
+                .putInt(DesktopConfig.KEY_WEATHER_MODE, weatherModeSpinner != null ? weatherModeSpinner.getSelectedItemPosition() : 0)
+                .putString(DesktopConfig.KEY_WEATHER_COLOR, weatherColor)
+                .putBoolean(DesktopConfig.KEY_WEATHER_BOLD, weatherBoldCheck != null && weatherBoldCheck.isChecked())
+                .putInt(DesktopConfig.KEY_WEATHER_WIDTH, seekValue(weatherWidthSeek, 360))
+                .putInt(DesktopConfig.KEY_WEATHER_HEIGHT, seekValue(weatherHeightSeek, 168))
+                .putInt(DesktopConfig.KEY_WEATHER_ALPHA, seekValue(weatherAlphaSeek, 100))
                 .putBoolean(ClockPrefs.KEY_CPU_OVERLAY, cpuOverlayCheck.isChecked())
                 .commit();
         updatePreview();
@@ -634,6 +726,16 @@ public class MainActivity extends AppCompatActivity {
         if (desktopDateCheck != null && desktopDateCheck.isChecked()) previewText.append("\n2026-01-01 星期四");
         if (desktopBatteryCheck != null && desktopBatteryCheck.isChecked()) previewText.append("  ·  电量 88%");
         if (desktopNetworkCheck != null && desktopNetworkCheck.isChecked()) previewText.append("\n↓ 1.2 MB/s\n↑ 128 KB/s");
+        if (desktopWeatherCheck != null && desktopWeatherCheck.isChecked()) {
+            String city = weatherCityEdit != null ? weatherCityEdit.getText().toString().trim() : "北京";
+            if (city.isEmpty()) city = "北京";
+            int mode = weatherModeSpinner != null ? weatherModeSpinner.getSelectedItemPosition() : 0;
+            if (mode == 0) {
+                previewText.append("\n📍 ").append(city).append(" · 三日卡片:\n[昨 23~11° 晴] [今 21~11° 多云] [明 22~11° 小雨]");
+            } else {
+                previewText.append("\n📍 ").append(city).append(" · 逐小时卡片:\n[12:00 19°] [13:00 20° 现] [14:00 21°] [15:00 21°]");
+            }
+        }
         preview.setText(previewText.toString());
         preview.setTextSize(Math.min(72, currentDesktopSize()));
         preview.setTypeface(Typeface.DEFAULT, desktopBoldCheck != null && desktopBoldCheck.isChecked() ? Typeface.BOLD : Typeface.NORMAL);

@@ -40,6 +40,7 @@ public class DesktopClockActivity extends AppCompatActivity {
     private TextView dateView;
     private TextView batteryView;
     private TextView networkView;
+    private WeatherCardView weatherCardView;
     private TextView hintView;
     private CpuMonitorView cpuMonitorView;
     private Handler handler;
@@ -58,6 +59,8 @@ public class DesktopClockActivity extends AppCompatActivity {
     private boolean showBattery;
     private boolean showNetwork;
     private boolean showCpu;
+    private boolean showWeather;
+    private String cachedWeatherJson;
     private boolean editMode;
     private FrameLayout editToolbar;
     private long lastRxBytes = -1L;
@@ -107,6 +110,13 @@ public class DesktopClockActivity extends AppCompatActivity {
         }
     };
 
+    private final Runnable weatherUpdater = new Runnable() {
+        @Override public void run() {
+            if (showWeather) refreshWeather(false);
+            handler.postDelayed(this, 30 * 60 * 1000L);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -136,6 +146,7 @@ public class DesktopClockActivity extends AppCompatActivity {
         handler.removeCallbacks(batteryUpdater);
         handler.removeCallbacks(networkUpdater);
         handler.removeCallbacks(cpuUpdater);
+        handler.removeCallbacks(weatherUpdater);
         handler.removeCallbacks(longPressExitRunnable);
     }
 
@@ -215,6 +226,25 @@ public class DesktopClockActivity extends AppCompatActivity {
         networkParams.setMargins(0, 0, dp(24), dp(18));
         root.addView(networkView, networkParams);
 
+        weatherCardView = new WeatherCardView(this);
+        int cardW = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 360));
+        int cardH = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 168));
+        FrameLayout.LayoutParams weatherParams = new FrameLayout.LayoutParams(
+                cardW, cardH, Gravity.TOP | Gravity.START);
+        weatherParams.setMargins(dp(24), dp(20), 0, 0);
+        root.addView(weatherCardView, weatherParams);
+        weatherCardView.setOnClickListener(v -> {
+            if (!editMode) cycleWeatherMode();
+        });
+        weatherCardView.setOnLongClickListener(v -> {
+            if (!editMode) {
+                Toast.makeText(this, "正在刷新天气数据...", Toast.LENGTH_SHORT).show();
+                refreshWeather(true);
+                return true;
+            }
+            return false;
+        });
+
         cpuMonitorView = new CpuMonitorView(this);
         FrameLayout.LayoutParams cpuParams = new FrameLayout.LayoutParams(dp(140), dp(258), Gravity.START | Gravity.CENTER_VERTICAL);
         cpuParams.setMargins(dp(18), 0, 0, 0);
@@ -263,16 +293,32 @@ public class DesktopClockActivity extends AppCompatActivity {
         showBattery = ClockPrefs.showDesktopBattery(prefs);
         showNetwork = ClockPrefs.showDesktopNetwork(prefs);
         showCpu = ClockPrefs.showDesktopCpu(prefs);
+        showWeather = prefs.getBoolean(DesktopConfig.KEY_SHOW_WEATHER, true);
         dateView.setVisibility(showDate ? View.VISIBLE : View.GONE);
         batteryView.setVisibility(showBattery ? View.VISIBLE : View.GONE);
         networkView.setVisibility(showNetwork ? View.VISIBLE : View.GONE);
         cpuMonitorView.setVisibility(showCpu ? View.VISIBLE : View.GONE);
+        weatherCardView.setVisibility(showWeather ? View.VISIBLE : View.GONE);
         applyTextStyle(dateView, DesktopConfig.KEY_DATE_COLOR, DesktopConfig.KEY_DATE_SIZE,
                 DesktopConfig.KEY_DATE_BOLD, "#D2FFFFFF", 24, false);
         applyTextStyle(batteryView, DesktopConfig.KEY_BATTERY_COLOR, DesktopConfig.KEY_BATTERY_SIZE,
                 DesktopConfig.KEY_BATTERY_BOLD, "#B9FFFFFF", 20, false);
         applyTextStyle(networkView, DesktopConfig.KEY_NETWORK_COLOR, DesktopConfig.KEY_NETWORK_SIZE,
                 DesktopConfig.KEY_NETWORK_BOLD, "#B9FFFFFF", 18, true);
+        weatherCardView.setPanelAlpha(prefs.getInt(DesktopConfig.KEY_WEATHER_ALPHA, 100));
+        weatherCardView.setCityName(prefs.getString(DesktopConfig.KEY_WEATHER_CITY, "北京"));
+        weatherCardView.setCardMode(prefs.getInt(DesktopConfig.KEY_WEATHER_MODE, WeatherCardView.MODE_DAILY));
+        try {
+            weatherCardView.setTextColor(Color.parseColor(prefs.getString(DesktopConfig.KEY_WEATHER_COLOR, "#D2FFFFFF")));
+        } catch (Exception ignored) {
+            weatherCardView.setTextColor(Color.WHITE);
+        }
+        weatherCardView.setTextBold(prefs.getBoolean(DesktopConfig.KEY_WEATHER_BOLD, true));
+        FrameLayout.LayoutParams weatherLayout = (FrameLayout.LayoutParams) weatherCardView.getLayoutParams();
+        weatherLayout.width = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 360));
+        weatherLayout.height = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 168));
+        weatherCardView.setLayoutParams(weatherLayout);
+        updateWeatherDisplay();
         cpuMonitorView.setPanelAlpha(prefs.getInt(DesktopConfig.KEY_CPU_ALPHA, 100));
         FrameLayout.LayoutParams cpuLayout = (FrameLayout.LayoutParams) cpuMonitorView.getLayoutParams();
         cpuLayout.width = dp(prefs.getInt(DesktopConfig.KEY_CPU_WIDTH, 140));
@@ -297,6 +343,11 @@ public class DesktopClockActivity extends AppCompatActivity {
         if (showNetwork) handler.post(networkUpdater);
         handler.removeCallbacks(cpuUpdater);
         if (showCpu) handler.post(cpuUpdater);
+        handler.removeCallbacks(weatherUpdater);
+        if (showWeather) {
+            refreshWeather(false);
+            handler.postDelayed(weatherUpdater, 30 * 60 * 1000L);
+        }
         root.post(() -> {
             restoreComponentPositions();
             if (!editMode) moveClockSlightly();
@@ -316,6 +367,7 @@ public class DesktopClockActivity extends AppCompatActivity {
         animateBurnInSafely(dateView, dp(24), dp(24), dp(5));
         animateBurnInSafely(batteryView, dp(24), dp(24), dp(5));
         animateBurnInSafely(networkView, dp(20), dp(16), dp(5));
+        animateBurnInSafely(weatherCardView, dp(20), dp(20), dp(5));
         if (cpuMonitorView != null && showCpu) {
             animateBurnInSafely(cpuMonitorView, dp(14), dp(36), dp(6));
             Log.i(BURN_IN_TAG, "CPU面板安全漂移：x="
@@ -482,11 +534,13 @@ public class DesktopClockActivity extends AppCompatActivity {
         pinCurrentPosition(batteryView);
         pinCurrentPosition(networkView);
         pinCurrentPosition(cpuMonitorView);
+        pinCurrentPosition(weatherCardView);
         attachDrag(clockView, DesktopConfig.COMPONENT_CLOCK);
         attachDrag(dateView, DesktopConfig.COMPONENT_DATE);
         attachDrag(batteryView, DesktopConfig.COMPONENT_BATTERY);
         attachDrag(networkView, DesktopConfig.COMPONENT_NETWORK);
         attachDrag(cpuMonitorView, DesktopConfig.COMPONENT_CPU);
+        attachDrag(weatherCardView, DesktopConfig.COMPONENT_WEATHER);
     }
 
     private void pinCurrentPosition(View view) {
@@ -507,7 +561,7 @@ public class DesktopClockActivity extends AppCompatActivity {
         outline.setColor(Color.argb(28, 255, 255, 255));
         outline.setStroke(dp(1), Color.argb(180, 255, 210, 80));
         outline.setCornerRadius(dp(8));
-        if (view != cpuMonitorView) view.setBackground(outline);
+        if (view != cpuMonitorView && view != weatherCardView) view.setBackground(outline);
         view.setOnTouchListener(new View.OnTouchListener() {
             float downRawX, downRawY, startX, startY;
             @Override public boolean onTouch(View v, MotionEvent event) {
@@ -566,6 +620,7 @@ public class DesktopClockActivity extends AppCompatActivity {
         restorePosition(batteryView, DesktopConfig.COMPONENT_BATTERY);
         restorePosition(networkView, DesktopConfig.COMPONENT_NETWORK);
         restorePosition(cpuMonitorView, DesktopConfig.COMPONENT_CPU);
+        restorePosition(weatherCardView, DesktopConfig.COMPONENT_WEATHER);
         if (editToolbar != null) editToolbar.bringToFront();
     }
 
@@ -584,8 +639,60 @@ public class DesktopClockActivity extends AppCompatActivity {
                 .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_BATTERY)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_BATTERY))
                 .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_NETWORK)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_NETWORK))
                 .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_CPU)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_CPU))
+                .remove(DesktopConfig.posX(DesktopConfig.COMPONENT_WEATHER)).remove(DesktopConfig.posY(DesktopConfig.COMPONENT_WEATHER))
                 .commit();
         recreate();
+    }
+
+    private void cycleWeatherMode() {
+        if (weatherCardView == null) return;
+        int currentMode = weatherCardView.getCardMode();
+        int nextMode = (currentMode == WeatherCardView.MODE_DAILY) ? WeatherCardView.MODE_HOURLY : WeatherCardView.MODE_DAILY;
+        weatherCardView.setCardMode(nextMode);
+        prefs.edit().putInt(DesktopConfig.KEY_WEATHER_MODE, nextMode).apply();
+        String modeName = (nextMode == WeatherCardView.MODE_DAILY) ? "三日对比卡片" : "逐小时走势卡片";
+        Toast.makeText(this, "切换为: " + modeName, Toast.LENGTH_SHORT).show();
+    }
+
+    private void updateWeatherDisplay() {
+        if (!showWeather || weatherCardView == null) return;
+        int mode = prefs.getInt(DesktopConfig.KEY_WEATHER_MODE, WeatherCardView.MODE_DAILY);
+        String city = prefs.getString(DesktopConfig.KEY_WEATHER_CITY, "北京");
+        weatherCardView.setCityName(city);
+        weatherCardView.setCardMode(mode);
+        if (cachedWeatherJson != null) {
+            weatherCardView.updateWeatherData(cachedWeatherJson, false);
+        } else {
+            String cache = prefs.getString(DesktopConfig.KEY_WEATHER_DATA_CACHE, null);
+            if (cache != null) {
+                cachedWeatherJson = cache;
+                weatherCardView.updateWeatherData(cachedWeatherJson, false);
+            } else {
+                weatherCardView.updateWeatherData(null, false);
+            }
+        }
+    }
+
+    private void refreshWeather(boolean force) {
+        if (!showWeather) return;
+        float lat = prefs.getFloat(DesktopConfig.KEY_WEATHER_LAT, 39.9042f);
+        float lon = prefs.getFloat(DesktopConfig.KEY_WEATHER_LON, 116.4074f);
+        WeatherManager.fetchWeather(this, lat, lon, force, new WeatherManager.WeatherCallback() {
+            @Override
+            public void onSuccess(String json) {
+                cachedWeatherJson = json;
+                updateWeatherDisplay();
+                if (force) Toast.makeText(DesktopClockActivity.this, "天气已更新", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onError(String message) {
+                if (cachedWeatherJson == null && weatherCardView != null) {
+                    weatherCardView.updateWeatherData(null, true);
+                }
+                if (force) Toast.makeText(DesktopClockActivity.this, message, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private boolean handleRootTouch(View v, MotionEvent event) {

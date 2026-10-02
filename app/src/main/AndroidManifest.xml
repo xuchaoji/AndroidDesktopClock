@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:allowBackup="true"
@@ -15,7 +17,7 @@
         <activity
             android:name=".DesktopClockActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:exported="false"
+            android:exported="true"
             android:screenOrientation="sensorLandscape" />
 
         <activity

@@ -24,6 +24,19 @@ public final class DesktopConfig {
     public static final String KEY_CPU_WIDTH = "desktop_cpu_width";
     public static final String KEY_CPU_HEIGHT = "desktop_cpu_height";
     public static final String KEY_CPU_ALPHA = "desktop_cpu_alpha";
+    public static final String KEY_SHOW_WEATHER = "desktop_show_weather";
+    public static final String KEY_WEATHER_CITY = "desktop_weather_city";
+    public static final String KEY_WEATHER_LAT = "desktop_weather_lat";
+    public static final String KEY_WEATHER_LON = "desktop_weather_lon";
+    public static final String KEY_WEATHER_MODE = "desktop_weather_mode";
+    public static final String KEY_WEATHER_COLOR = "desktop_weather_color";
+    public static final String KEY_WEATHER_SIZE = "desktop_weather_size";
+    public static final String KEY_WEATHER_BOLD = "desktop_weather_bold";
+    public static final String KEY_WEATHER_WIDTH = "desktop_weather_width";
+    public static final String KEY_WEATHER_HEIGHT = "desktop_weather_height";
+    public static final String KEY_WEATHER_ALPHA = "desktop_weather_alpha";
+    public static final String KEY_WEATHER_DATA_CACHE = "desktop_weather_data_cache";
+    public static final String KEY_WEATHER_CACHE_TIME = "desktop_weather_cache_time";
     public static final String KEY_POS_PREFIX = "desktop_pos_";
     public static final String KEY_PRESETS = "desktop_presets_json";
 
@@ -32,6 +45,7 @@ public final class DesktopConfig {
     public static final String COMPONENT_BATTERY = "battery";
     public static final String COMPONENT_NETWORK = "network";
     public static final String COMPONENT_CPU = "cpu";
+    public static final String COMPONENT_WEATHER = "weather";
 
     private static final String[] SNAPSHOT_KEYS = new String[]{
             ClockPrefs.KEY_DESKTOP_TEXT_COLOR, ClockPrefs.KEY_DESKTOP_SHADOW_COLOR,
@@ -41,9 +55,12 @@ public final class DesktopConfig {
             KEY_BATTERY_COLOR, KEY_BATTERY_SIZE, KEY_BATTERY_BOLD,
             KEY_NETWORK_COLOR, KEY_NETWORK_SIZE, KEY_NETWORK_BOLD,
             KEY_CPU_WIDTH, KEY_CPU_HEIGHT, KEY_CPU_ALPHA,
+            KEY_SHOW_WEATHER, KEY_WEATHER_CITY, KEY_WEATHER_LAT, KEY_WEATHER_LON,
+            KEY_WEATHER_MODE, KEY_WEATHER_COLOR, KEY_WEATHER_SIZE, KEY_WEATHER_BOLD,
+            KEY_WEATHER_WIDTH, KEY_WEATHER_HEIGHT, KEY_WEATHER_ALPHA,
             posX(COMPONENT_CLOCK), posY(COMPONENT_CLOCK), posX(COMPONENT_DATE), posY(COMPONENT_DATE),
             posX(COMPONENT_BATTERY), posY(COMPONENT_BATTERY), posX(COMPONENT_NETWORK), posY(COMPONENT_NETWORK),
-            posX(COMPONENT_CPU), posY(COMPONENT_CPU)
+            posX(COMPONENT_CPU), posY(COMPONENT_CPU), posX(COMPONENT_WEATHER), posY(COMPONENT_WEATHER)
     };
 
     private DesktopConfig() { }
@@ -64,6 +81,17 @@ public final class DesktopConfig {
         changed |= putIntIfMissing(prefs, e, KEY_CPU_WIDTH, 140);
         changed |= putIntIfMissing(prefs, e, KEY_CPU_HEIGHT, 258);
         changed |= putIntIfMissing(prefs, e, KEY_CPU_ALPHA, 100);
+        changed |= putBooleanIfMissing(prefs, e, KEY_SHOW_WEATHER, true);
+        changed |= putStringIfMissing(prefs, e, KEY_WEATHER_CITY, "北京");
+        changed |= putFloatIfMissing(prefs, e, KEY_WEATHER_LAT, 39.9042f);
+        changed |= putFloatIfMissing(prefs, e, KEY_WEATHER_LON, 116.4074f);
+        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_MODE, 0);
+        changed |= putStringIfMissing(prefs, e, KEY_WEATHER_COLOR, "#D2FFFFFF");
+        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_SIZE, 16);
+        changed |= putBooleanIfMissing(prefs, e, KEY_WEATHER_BOLD, true);
+        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_WIDTH, 360);
+        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_HEIGHT, 168);
+        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_ALPHA, 100);
         if (changed) e.apply();
     }
 
@@ -72,6 +100,9 @@ public final class DesktopConfig {
     }
     private static boolean putIntIfMissing(SharedPreferences p, SharedPreferences.Editor e, String k, int v) {
         if (p.contains(k)) return false; e.putInt(k, v); return true;
+    }
+    private static boolean putFloatIfMissing(SharedPreferences p, SharedPreferences.Editor e, String k, float v) {
+        if (p.contains(k)) return false; e.putFloat(k, v); return true;
     }
     private static boolean putBooleanIfMissing(SharedPreferences p, SharedPreferences.Editor e, String k, boolean v) {
         if (p.contains(k)) return false; e.putBoolean(k, v); return true;
@@ -110,8 +141,11 @@ public final class DesktopConfig {
             else if (value instanceof Integer) e.putInt(key, (Integer) value);
             else if (value instanceof Long) e.putLong(key, (Long) value);
             else if (value instanceof Double) {
-                if (key.startsWith(KEY_POS_PREFIX)) e.putFloat(key, ((Double) value).floatValue());
-                else e.putInt(key, ((Double) value).intValue());
+                if (key.startsWith(KEY_POS_PREFIX) || key.equals(KEY_WEATHER_LAT) || key.equals(KEY_WEATHER_LON)) {
+                    e.putFloat(key, ((Double) value).floatValue());
+                } else {
+                    e.putInt(key, ((Double) value).intValue());
+                }
             } else e.putString(key, String.valueOf(value));
         }
         e.commit();
