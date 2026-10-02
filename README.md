@@ -126,6 +126,8 @@ app/src/main/java/com/example/floatingclock/
 ├── ColorPickerDialog.java      # 内置选色盘（HSV 色板 + 亮度/透明度滑条）
 ├── ClockOverlayService.java    # 悬浮时钟服务（可拖动）
 ├── DesktopClockActivity.java   # 桌面时钟全屏页面（防烧屏 / 亮度手势 / 信息面板）
+├── DesktopConfig.java          # 桌面时钟组件化布局配置与预设管理
+├── WeatherCardView.java        # 结构化天气卡片（三日对比 / 逐小时走势）
 ├── CpuMonitorView.java         # CPU 每核心占用曲线（自定义 View，大小核排布）
 └── CpuOverlayService.java      # 悬浮 CPU 监控服务（复用 CpuMonitorView）
 ```
