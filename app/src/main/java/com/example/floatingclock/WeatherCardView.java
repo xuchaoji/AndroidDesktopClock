@@ -11,20 +11,15 @@ import android.view.View;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * 结构化天气卡片组件（参考表格卡片格式）：
- * 支持【三日对比卡片】与【逐小时卡片】点击切换。
- *
- * 格式参考：
- * |日期|10/1 (昨)|10/2 (今)|10/3 (明)|
- * |天气|  阴     |  多云   |  小雨   |
- * |温度|23°~11°  |21°~11°  |22°~11°  |
+ * 紧凑型结构化天气卡片（不占多余高度）：
+ * 1. 去除首列冗余标题（日期/天气/温度行标），纯数据表格更宽敞。
+ * 2. 温度改为单行显示（如 11~23°），高度大幅缩减（仅 ~96dp）。
+ * 3. 支持轻触在【三日对比】与【逐小时走势】间直接切换。
  */
 public class WeatherCardView extends View {
     public static final int MODE_DAILY = 0;   // 三日对比卡片
@@ -60,7 +55,7 @@ public class WeatherCardView extends View {
 
     public static class HourlyItem {
         public String timeStr;    // "12:00"
-        public String sublabel;   // "一小时前", "现在", "+1h"
+        public String sublabel;   // "前", "现", "+1h"
         public String weatherDesc;// "多云"
         public String icon;       // "⛅"
         public int temp;          // 20
@@ -160,7 +155,6 @@ public class WeatherCardView extends View {
                 double appTemp = current.optDouble("apparent_temperature", temp);
                 int hum = current.optInt("relative_humidity_2m", 0);
                 int code = current.optInt("weather_code", 0);
-                double wind = current.optDouble("wind_speed_10m", 0);
 
                 currentSummary = String.format(Locale.getDefault(),
                         "📍 %s · %s %.0f℃ %s · 体感 %.0f℃ · 湿度 %d%%",
@@ -201,7 +195,6 @@ public class WeatherCardView extends View {
                 JSONArray hCode = hourly.optJSONArray("weather_code");
 
                 if (hTime != null && hTemp != null && hTime.length() >= 16) {
-                    // 默认 past_hours=12, 当前小时在 index=12
                     int nowIdx = 12;
                     String currTime = (current != null) ? current.optString("time", "") : "";
                     if (currTime.length() >= 13) {
@@ -215,7 +208,7 @@ public class WeatherCardView extends View {
                     }
 
                     int[] offsets = new int[]{-1, 0, 1, 2, 3};
-                    String[] subs = new String[]{"一小时前", "现在", "+1h", "+2h", "+3h"};
+                    String[] subs = new String[]{"前", "现", "+1h", "+2h", "+3h"};
                     for (int o = 0; o < offsets.length; o++) {
                         int idx = nowIdx + offsets[o];
                         if (idx >= 0 && idx < hTime.length()) {
@@ -264,8 +257,8 @@ public class WeatherCardView extends View {
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         float density = getResources().getDisplayMetrics().density;
-        int defWidth = Math.round(360 * density);
-        int defHeight = Math.round(168 * density);
+        int defWidth = Math.round(290 * density);
+        int defHeight = Math.round(96 * density);
 
         int width = resolveSize(defWidth, widthMeasureSpec);
         int height = resolveSize(defHeight, heightMeasureSpec);
@@ -280,9 +273,9 @@ public class WeatherCardView extends View {
         if (w <= 0 || h <= 0) return;
 
         float density = getResources().getDisplayMetrics().density;
-        float cornerRadius = 14 * density;
+        float cornerRadius = 11 * density;
 
-        // 1. 卡片外框与半透明毛玻璃背景
+        // 1. 卡片外框与半透明背景
         int alpha255 = Math.round(255 * (panelAlphaPercent / 100f));
         rectF.set(0, 0, w, h);
         paint.setStyle(Paint.Style.FILL);
@@ -291,25 +284,25 @@ public class WeatherCardView extends View {
 
         // 卡片边框
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1.2f * density);
+        paint.setStrokeWidth(1.1f * density);
         paint.setColor(Color.argb(Math.round(alpha255 * 0.22f), 255, 255, 255));
         canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, paint);
 
-        // 2. 顶部栏 (Header)
-        float headerH = 34 * density;
+        // 2. 紧凑顶部栏 (Header ~25dp)
+        float headerH = 25 * density;
         drawHeader(canvas, w, headerH, density, alpha255);
 
         // 顶部栏与表格之间的水平分割线
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1f * density);
+        paint.setStrokeWidth(0.9f * density);
         paint.setColor(Color.argb(Math.round(alpha255 * 0.18f), 255, 255, 255));
-        canvas.drawLine(8 * density, headerH, w - 8 * density, headerH, paint);
+        canvas.drawLine(6 * density, headerH, w - 6 * density, headerH, paint);
 
-        // 3. 表格区域
-        float tableTop = headerH + 4 * density;
-        float tableBottom = h - 6 * density;
-        float tableLeft = 8 * density;
-        float tableRight = w - 8 * density;
+        // 3. 表格区域（纯数据列，无第一列文字）
+        float tableTop = headerH + 2 * density;
+        float tableBottom = h - 4 * density;
+        float tableLeft = 6 * density;
+        float tableRight = w - 6 * density;
 
         if (cardMode == MODE_DAILY) {
             drawDailyTable(canvas, tableLeft, tableTop, tableRight, tableBottom, density, alpha255);
@@ -321,34 +314,34 @@ public class WeatherCardView extends View {
     private void drawHeader(Canvas canvas, int w, float headerH, float density, int alpha255) {
         paint.setStyle(Paint.Style.FILL);
         paint.setFakeBoldText(true);
-        paint.setTextSize(12.5f * density);
+        paint.setTextSize(11.5f * density);
         paint.setColor(Color.argb(alpha255, 240, 245, 255));
 
         // 左侧实时概况文本
         Paint.FontMetrics fm = paint.getFontMetrics();
         float textY = (headerH - (fm.bottom + fm.top)) / 2f;
-        canvas.drawText(currentSummary, 12 * density, textY, paint);
+        canvas.drawText(currentSummary, 9 * density, textY, paint);
 
         // 右侧模式指示器胶囊
-        String badgeText = (cardMode == MODE_DAILY) ? "📅 三日卡片" : "⏱️ 逐小时卡片";
-        paint.setTextSize(11f * density);
+        String badgeText = (cardMode == MODE_DAILY) ? "📅 三日" : "⏱️ 逐小时";
+        paint.setTextSize(10f * density);
         float badgeTextW = paint.measureText(badgeText);
-        float badgePadH = 7 * density;
+        float badgePadH = 6 * density;
         float badgeW = badgeTextW + badgePadH * 2;
-        float badgeH = 20 * density;
-        float badgeRight = w - 10 * density;
+        float badgeH = 17 * density;
+        float badgeRight = w - 8 * density;
         float badgeLeft = badgeRight - badgeW;
         float badgeTop = (headerH - badgeH) / 2f;
 
         RectF badgeRect = new RectF(badgeLeft, badgeTop, badgeRight, badgeTop + badgeH);
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.argb(Math.round(alpha255 * 0.22f), 66, 183, 255));
-        canvas.drawRoundRect(badgeRect, 10 * density, 10 * density, paint);
+        canvas.drawRoundRect(badgeRect, 8 * density, 8 * density, paint);
 
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1f * density);
+        paint.setStrokeWidth(0.9f * density);
         paint.setColor(Color.argb(Math.round(alpha255 * 0.5f), 100, 210, 255));
-        canvas.drawRoundRect(badgeRect, 10 * density, 10 * density, paint);
+        canvas.drawRoundRect(badgeRect, 8 * density, 8 * density, paint);
 
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.argb(alpha255, 215, 240, 255));
@@ -358,215 +351,162 @@ public class WeatherCardView extends View {
     }
 
     /**
-     * 绘制三日对比表格:
-     * |日期|10/1(昨)|10/2(今)|10/3(明)|
-     * |天气|   阴   |  多云  |  小雨  |
-     * |温度| 23°~11°| 21°~11°| 22°~11°|
+     * 紧凑三日对比表格（无首列，单行温度）：
+     * 3 列：[10/1 昨]  [10/2 今(高亮)]  [10/3 明]
+     * 行1: 日期与副标 (10/2 今)
+     * 行2: 天气图标与简述 (⛅ 多云)
+     * 行3: 单行温度 (11~21°)
      */
     private void drawDailyTable(Canvas canvas, float left, float top, float right, float bottom, float density, int alpha255) {
         float tableW = right - left;
         float tableH = bottom - top;
+        int count = Math.min(3, dailyItems.size());
+        if (count == 0) return;
 
-        // 列宽划分：左侧标题列占 20%，3个数据列各占约 26.6%
-        float headerColW = tableW * 0.20f;
-        float dataColW = (tableW - headerColW) / 3f;
+        float colW = tableW / 3f;
+        float rowH = tableH / 3f;
+        float r0Bottom = top + rowH;
+        float r1Bottom = r0Bottom + rowH;
 
-        // 行高划分
-        float row0H = tableH * 0.32f; // 日期行
-        float row1H = tableH * 0.30f; // 天气行
-        float row2H = tableH - row0H - row1H; // 温度行
-
-        float r0Bottom = top + row0H;
-        float r1Bottom = r0Bottom + row1H;
-
-        // 1. 标题列浅色背景
-        rectF.set(left, top, left + headerColW, bottom);
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(Math.round(alpha255 * 0.12f), 255, 255, 255));
-        canvas.drawRoundRect(rectF, 4 * density, 4 * density, paint);
-
-        // 2. 高亮“今天”所在的列
+        // 1. 高亮“今天”所在的列 (index 1)
         if (dailyItems.size() >= 2) {
-            float todayLeft = left + headerColW + dataColW;
-            float todayRight = todayLeft + dataColW;
+            float todayLeft = left + 1 * colW;
+            float todayRight = todayLeft + colW;
             rectF.set(todayLeft, top, todayRight, bottom);
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.argb(Math.round(alpha255 * 0.16f), 66, 183, 255));
-            canvas.drawRoundRect(rectF, 6 * density, 6 * density, paint);
+            canvas.drawRoundRect(rectF, 5 * density, 5 * density, paint);
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(1.2f * density);
-            paint.setColor(Color.argb(Math.round(alpha255 * 0.45f), 100, 210, 255));
-            canvas.drawRoundRect(rectF, 6 * density, 6 * density, paint);
+            paint.setStrokeWidth(1f * density);
+            paint.setColor(Color.argb(Math.round(alpha255 * 0.40f), 100, 210, 255));
+            canvas.drawRoundRect(rectF, 5 * density, 5 * density, paint);
         }
 
-        // 3. 网格水平分隔线
+        // 2. 内部水平分割线 (细线)
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1f * density);
-        paint.setColor(Color.argb(Math.round(alpha255 * 0.18f), 255, 255, 255));
+        paint.setStrokeWidth(0.8f * density);
+        paint.setColor(Color.argb(Math.round(alpha255 * 0.14f), 255, 255, 255));
         canvas.drawLine(left, r0Bottom, right, r0Bottom, paint);
         canvas.drawLine(left, r1Bottom, right, r1Bottom, paint);
 
-        // 4. 网格垂直分隔线
-        for (int i = 0; i <= 3; i++) {
-            float x = left + headerColW + i * dataColW;
+        // 3. 列间垂直分隔线
+        for (int i = 1; i < 3; i++) {
+            float x = left + i * colW;
             canvas.drawLine(x, top, x, bottom, paint);
         }
 
-        // 5. 绘制标题列文字【日期、天气、温度】
+        // 4. 绘制各日数据（纯单行）
         paint.setStyle(Paint.Style.FILL);
-        paint.setFakeBoldText(customBold);
-        paint.setTextSize(13f * density);
-        paint.setColor(Color.argb(Math.round(alpha255 * 0.85f), 220, 230, 250));
-
-        drawCenteredText(canvas, "日期", left, top, headerColW, row0H);
-        drawCenteredText(canvas, "天气", left, r0Bottom, headerColW, row1H);
-        drawCenteredText(canvas, "温度", left, r1Bottom, headerColW, row2H);
-
-        // 6. 绘制各日数据
-        for (int i = 0; i < Math.min(3, dailyItems.size()); i++) {
+        for (int i = 0; i < count; i++) {
             DailyItem item = dailyItems.get(i);
-            float colX = left + headerColW + i * dataColW;
+            float cx = left + i * colW + colW / 2f;
 
-            // Row 0: 日期 + (昨/今/明)
-            float cy0 = top + row0H / 2f;
-            paint.setTextSize(12.5f * density);
+            // 行 1: 日期 + 昨/今/明 (单行: 10/2 今)
+            float cy0 = top + rowH / 2f;
+            paint.setTextSize(11.5f * density);
             paint.setFakeBoldText(true);
-            paint.setColor(item.isToday ? Color.argb(alpha255, 120, 220, 255) : Color.argb(alpha255, 240, 245, 255));
-            drawTextCenteredAt(canvas, item.dateStr, colX + dataColW / 2f, cy0 - 7 * density);
+            paint.setColor(item.isToday ? Color.argb(alpha255, 120, 220, 255) : Color.argb(alpha255, 235, 240, 255));
+            String dateLabel = item.dateStr + " " + item.sublabel;
+            drawTextCenteredAt(canvas, dateLabel, cx, cy0);
 
+            // 行 2: 天气图标 + 状况 (单行: ⛅ 晴间多云)
+            float cy1 = r0Bottom + rowH / 2f;
             paint.setTextSize(11f * density);
-            paint.setFakeBoldText(false);
-            paint.setColor(item.isToday ? Color.argb(alpha255, 255, 215, 100) : Color.argb(Math.round(alpha255 * 0.7f), 200, 210, 225));
-            drawTextCenteredAt(canvas, item.sublabel, colX + dataColW / 2f, cy0 + 8 * density);
-
-            // Row 1: 天气图标 + 描述
-            float cy1 = r0Bottom + row1H / 2f;
-            paint.setTextSize(13f * density);
             paint.setFakeBoldText(false);
             paint.setColor(Color.argb(alpha255, 245, 245, 255));
             String weatherLabel = item.icon + " " + item.weatherDesc;
-            drawTextCenteredAt(canvas, weatherLabel, colX + dataColW / 2f, cy1);
+            drawTextCenteredAt(canvas, weatherLabel, cx, cy1);
 
-            // Row 2: 温度 (xx° ~ xx°)
-            // 采用上下堆叠呈现：高温 / ~ / 低温
-            float cy2 = r1Bottom + row2H / 2f;
-            paint.setTextSize(12.5f * density);
+            // 行 3: 单行温度 (单行: 11~23°)
+            float cy2 = r1Bottom + rowH / 2f;
+            paint.setTextSize(12f * density);
             paint.setFakeBoldText(true);
-            paint.setColor(Color.argb(alpha255, 255, 175, 90)); // 高温橙色
-            drawTextCenteredAt(canvas, item.maxTemp + "°", colX + dataColW / 2f, cy2 - 9 * density);
-
-            paint.setTextSize(9.5f * density);
-            paint.setColor(Color.argb(Math.round(alpha255 * 0.6f), 200, 210, 225));
-            drawTextCenteredAt(canvas, "~", colX + dataColW / 2f, cy2);
-
-            paint.setTextSize(12.5f * density);
-            paint.setColor(Color.argb(alpha255, 110, 205, 255)); // 低温浅蓝
-            drawTextCenteredAt(canvas, item.minTemp + "°", colX + dataColW / 2f, cy2 + 9 * density);
+            paint.setColor(item.isToday ? Color.argb(alpha255, 255, 215, 100) : Color.argb(alpha255, 255, 190, 110));
+            String tempLabel = item.minTemp + "~" + item.maxTemp + "°";
+            drawTextCenteredAt(canvas, tempLabel, cx, cy2);
         }
     }
 
     /**
-     * 绘制逐小时表格:
-     * |时间|12:00(一小时前)|13:00(现在)|14:00|15:00|16:00|
-     * |天气|     阴        |   多云    |小雨 | 小雨| 小雨|
-     * |温度|    20°        |    21°    | 21° |  19°|  17°|
+     * 紧凑逐小时走势表格（无首列，单行温度）：
+     * 5 列：[12:00 前]  [13:00 现(高亮)]  [14:00]  [15:00]  [16:00]
+     * 行1: 时间
+     * 行2: 天气
+     * 行3: 单行温度
      */
     private void drawHourlyTable(Canvas canvas, float left, float top, float right, float bottom, float density, int alpha255) {
         float tableW = right - left;
         float tableH = bottom - top;
+        int count = Math.min(5, hourlyItems.size());
+        if (count == 0) return;
 
-        // 列宽划分：左侧标题列占 16%，5个逐小时数据列平分剩余 84%
-        float headerColW = tableW * 0.16f;
-        float dataColW = (tableW - headerColW) / 5f;
+        float colW = tableW / 5f;
+        float rowH = tableH / 3f;
+        float r0Bottom = top + rowH;
+        float r1Bottom = r0Bottom + rowH;
 
-        float row0H = tableH * 0.32f;
-        float row1H = tableH * 0.30f;
-        float row2H = tableH - row0H - row1H;
-
-        float r0Bottom = top + row0H;
-        float r1Bottom = r0Bottom + row1H;
-
-        // 1. 标题列背景
-        rectF.set(left, top, left + headerColW, bottom);
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(Math.round(alpha255 * 0.12f), 255, 255, 255));
-        canvas.drawRoundRect(rectF, 4 * density, 4 * density, paint);
-
-        // 2. 高亮“现在”所在的列 (index 1)
+        // 1. 高亮“现在”所在的列 (index 1)
         if (hourlyItems.size() >= 2) {
-            float nowLeft = left + headerColW + 1 * dataColW;
-            float nowRight = nowLeft + dataColW;
+            float nowLeft = left + 1 * colW;
+            float nowRight = nowLeft + colW;
             rectF.set(nowLeft, top, nowRight, bottom);
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.argb(Math.round(alpha255 * 0.16f), 66, 183, 255));
-            canvas.drawRoundRect(rectF, 6 * density, 6 * density, paint);
+            canvas.drawRoundRect(rectF, 5 * density, 5 * density, paint);
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(1.2f * density);
-            paint.setColor(Color.argb(Math.round(alpha255 * 0.45f), 100, 210, 255));
-            canvas.drawRoundRect(rectF, 6 * density, 6 * density, paint);
+            paint.setStrokeWidth(1f * density);
+            paint.setColor(Color.argb(Math.round(alpha255 * 0.40f), 100, 210, 255));
+            canvas.drawRoundRect(rectF, 5 * density, 5 * density, paint);
         }
 
-        // 3. 水平分隔线
+        // 2. 水平分割线
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(1f * density);
-        paint.setColor(Color.argb(Math.round(alpha255 * 0.18f), 255, 255, 255));
+        paint.setStrokeWidth(0.8f * density);
+        paint.setColor(Color.argb(Math.round(alpha255 * 0.14f), 255, 255, 255));
         canvas.drawLine(left, r0Bottom, right, r0Bottom, paint);
         canvas.drawLine(left, r1Bottom, right, r1Bottom, paint);
 
-        // 4. 垂直分隔线
-        for (int i = 0; i <= 5; i++) {
-            float x = left + headerColW + i * dataColW;
+        // 3. 列间垂直分隔线
+        for (int i = 1; i < 5; i++) {
+            float x = left + i * colW;
             canvas.drawLine(x, top, x, bottom, paint);
         }
 
-        // 5. 绘制标题列【时间、天气、温度】
+        // 4. 绘制逐小时列数据（纯单行）
         paint.setStyle(Paint.Style.FILL);
-        paint.setFakeBoldText(customBold);
-        paint.setTextSize(13f * density);
-        paint.setColor(Color.argb(Math.round(alpha255 * 0.85f), 220, 230, 250));
-
-        drawCenteredText(canvas, "时间", left, top, headerColW, row0H);
-        drawCenteredText(canvas, "天气", left, r0Bottom, headerColW, row1H);
-        drawCenteredText(canvas, "温度", left, r1Bottom, headerColW, row2H);
-
-        // 6. 绘制逐小时列数据
-        for (int i = 0; i < Math.min(5, hourlyItems.size()); i++) {
+        for (int i = 0; i < count; i++) {
             HourlyItem item = hourlyItems.get(i);
-            float colX = left + headerColW + i * dataColW;
+            float cx = left + i * colW + colW / 2f;
 
-            // Row 0: 时间 + (一小时前 / 现在 / +1h...)
-            float cy0 = top + row0H / 2f;
-            paint.setTextSize(11.5f * density);
+            // 行 1: 时间 (如 13:00 现 或 12:00 前)
+            float cy0 = top + rowH / 2f;
+            paint.setTextSize(10.5f * density);
             paint.setFakeBoldText(true);
-            paint.setColor(item.isNow ? Color.argb(alpha255, 120, 220, 255) : Color.argb(alpha255, 240, 245, 255));
-            drawTextCenteredAt(canvas, item.timeStr, colX + dataColW / 2f, cy0 - 6.5f * density);
+            paint.setColor(item.isNow ? Color.argb(alpha255, 120, 220, 255) : Color.argb(alpha255, 235, 240, 255));
+            String timeText;
+            if (item.isNow) {
+                timeText = item.timeStr + " 现";
+            } else if (i == 0) {
+                timeText = item.timeStr + " 前";
+            } else {
+                timeText = item.timeStr;
+            }
+            drawTextCenteredAt(canvas, timeText, cx, cy0);
 
-            paint.setTextSize(10f * density);
+            // 行 2: 天气图标 + 简短天气 (如 ☀️晴 或 ⛅多云)
+            float cy1 = r0Bottom + rowH / 2f;
+            paint.setTextSize(10.5f * density);
             paint.setFakeBoldText(false);
-            paint.setColor(item.isNow ? Color.argb(alpha255, 255, 215, 100) : Color.argb(Math.round(alpha255 * 0.65f), 190, 205, 225));
-            drawTextCenteredAt(canvas, item.sublabel, colX + dataColW / 2f, cy0 + 7.5f * density);
-
-            // Row 1: 天气图标 + 简短天气
-            float cy1 = r0Bottom + row1H / 2f;
-            paint.setTextSize(11.5f * density);
             paint.setColor(Color.argb(alpha255, 245, 245, 255));
-            drawTextCenteredAt(canvas, item.icon + item.weatherDesc, colX + dataColW / 2f, cy1);
+            drawTextCenteredAt(canvas, item.icon + item.weatherDesc, cx, cy1);
 
-            // Row 2: 小时温度
-            float cy2 = r1Bottom + row2H / 2f;
-            paint.setTextSize(14f * density);
+            // 行 3: 单行温度 (如 20°)
+            float cy2 = r1Bottom + rowH / 2f;
+            paint.setTextSize(12f * density);
             paint.setFakeBoldText(true);
             paint.setColor(item.isNow ? Color.argb(alpha255, 255, 215, 100) : Color.argb(alpha255, 120, 220, 255));
-            drawTextCenteredAt(canvas, item.temp + "°", colX + dataColW / 2f, cy2);
+            drawTextCenteredAt(canvas, item.temp + "°", cx, cy2);
         }
-    }
-
-    private void drawCenteredText(Canvas canvas, String text, float cellX, float cellY, float cellW, float cellH) {
-        Paint.FontMetrics fm = paint.getFontMetrics();
-        float textY = cellY + (cellH - (fm.bottom + fm.top)) / 2f;
-        float textW = paint.measureText(text);
-        float textX = cellX + (cellW - textW) / 2f;
-        canvas.drawText(text, textX, textY, paint);
     }
 
     private void drawTextCenteredAt(Canvas canvas, String text, float centerX, float centerY) {

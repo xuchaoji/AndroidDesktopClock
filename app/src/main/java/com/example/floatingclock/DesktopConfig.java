@@ -89,8 +89,8 @@ public final class DesktopConfig {
         changed |= putStringIfMissing(prefs, e, KEY_WEATHER_COLOR, "#D2FFFFFF");
         changed |= putIntIfMissing(prefs, e, KEY_WEATHER_SIZE, 16);
         changed |= putBooleanIfMissing(prefs, e, KEY_WEATHER_BOLD, true);
-        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_WIDTH, 360);
-        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_HEIGHT, 168);
+        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_WIDTH, 290);
+        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_HEIGHT, 96);
         changed |= putIntIfMissing(prefs, e, KEY_WEATHER_ALPHA, 100);
         if (changed) e.apply();
     }

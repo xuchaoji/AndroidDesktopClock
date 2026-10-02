@@ -227,8 +227,8 @@ public class DesktopClockActivity extends AppCompatActivity {
         root.addView(networkView, networkParams);
 
         weatherCardView = new WeatherCardView(this);
-        int cardW = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 360));
-        int cardH = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 168));
+        int cardW = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 290));
+        int cardH = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 96));
         FrameLayout.LayoutParams weatherParams = new FrameLayout.LayoutParams(
                 cardW, cardH, Gravity.TOP | Gravity.START);
         weatherParams.setMargins(dp(24), dp(20), 0, 0);
@@ -315,8 +315,8 @@ public class DesktopClockActivity extends AppCompatActivity {
         }
         weatherCardView.setTextBold(prefs.getBoolean(DesktopConfig.KEY_WEATHER_BOLD, true));
         FrameLayout.LayoutParams weatherLayout = (FrameLayout.LayoutParams) weatherCardView.getLayoutParams();
-        weatherLayout.width = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 360));
-        weatherLayout.height = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 168));
+        weatherLayout.width = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 290));
+        weatherLayout.height = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 96));
         weatherCardView.setLayoutParams(weatherLayout);
         updateWeatherDisplay();
         cpuMonitorView.setPanelAlpha(prefs.getInt(DesktopConfig.KEY_CPU_ALPHA, 100));

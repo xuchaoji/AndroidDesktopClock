@@ -386,8 +386,8 @@ public class MainActivity extends AppCompatActivity {
         weatherModeSpinner.setSelection(Math.max(0, Math.min(cardModeNames.length - 1, prefs.getInt(DesktopConfig.KEY_WEATHER_MODE, 0))));
         root.addView(weatherModeSpinner, matchWrap());
 
-        weatherWidthSeek = addSizeSeek(root, "天气卡片宽度", prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 360), 240, 520);
-        weatherHeightSeek = addSizeSeek(root, "天气卡片高度", prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 168), 120, 260);
+        weatherWidthSeek = addSizeSeek(root, "天气卡片宽度", prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 290), 180, 420);
+        weatherHeightSeek = addSizeSeek(root, "天气卡片高度", prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 96), 70, 180);
         weatherAlphaSeek = addSizeSeek(root, "天气卡片透明度", prefs.getInt(DesktopConfig.KEY_WEATHER_ALPHA, 100), 10, 100);
 
         weatherColorEdit = addLabeledEdit(root, "天气文字颜色", prefs.getString(DesktopConfig.KEY_WEATHER_COLOR, "#D2FFFFFF"), InputType.TYPE_CLASS_TEXT);
@@ -656,8 +656,8 @@ public class MainActivity extends AppCompatActivity {
                 .putInt(DesktopConfig.KEY_WEATHER_MODE, weatherModeSpinner != null ? weatherModeSpinner.getSelectedItemPosition() : 0)
                 .putString(DesktopConfig.KEY_WEATHER_COLOR, weatherColor)
                 .putBoolean(DesktopConfig.KEY_WEATHER_BOLD, weatherBoldCheck != null && weatherBoldCheck.isChecked())
-                .putInt(DesktopConfig.KEY_WEATHER_WIDTH, seekValue(weatherWidthSeek, 360))
-                .putInt(DesktopConfig.KEY_WEATHER_HEIGHT, seekValue(weatherHeightSeek, 168))
+                .putInt(DesktopConfig.KEY_WEATHER_WIDTH, seekValue(weatherWidthSeek, 290))
+                .putInt(DesktopConfig.KEY_WEATHER_HEIGHT, seekValue(weatherHeightSeek, 96))
                 .putInt(DesktopConfig.KEY_WEATHER_ALPHA, seekValue(weatherAlphaSeek, 100))
                 .putBoolean(ClockPrefs.KEY_CPU_OVERLAY, cpuOverlayCheck.isChecked())
                 .commit();
