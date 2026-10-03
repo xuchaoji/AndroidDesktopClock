@@ -46,6 +46,7 @@ public class DesktopClockActivity extends AppCompatActivity {
     private WeatherCardView weatherCardView;
     private TextView hintView;
     private CpuMonitorView cpuMonitorView;
+    private View dimOverlayView;
     private Handler handler;
     private SimpleDateFormat formatter;
     private final Random random = new Random();
@@ -273,6 +274,18 @@ public class DesktopClockActivity extends AppCompatActivity {
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         hintParams.setMargins(0, 0, 0, dp(18));
         root.addView(hintView, hintParams);
+
+        dimOverlayView = new View(this) {
+            @Override
+            public boolean dispatchTouchEvent(MotionEvent event) {
+                return false;
+            }
+        };
+        dimOverlayView.setBackgroundColor(Color.BLACK);
+        dimOverlayView.setVisibility(View.GONE);
+        FrameLayout.LayoutParams dimParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
+        root.addView(dimOverlayView, dimParams);
 
         if (editMode) buildEditToolbar();
         root.setOnTouchListener(editMode ? null : this::handleRootTouch);
@@ -928,6 +941,16 @@ public class DesktopClockActivity extends AppCompatActivity {
             }
             float nightBrightness = getNightBrightness();
             setBrightnessInternal(nightBrightness);
+            if (dimOverlayView != null) {
+                boolean extraDim = prefs.getBoolean(DesktopConfig.KEY_NIGHT_EXTRA_DIM, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM);
+                if (extraDim) {
+                    int depth = prefs.getInt(DesktopConfig.KEY_NIGHT_EXTRA_DIM_DEPTH, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM_DEPTH);
+                    dimOverlayView.setAlpha(clamp(depth / 100f, 0.1f, 0.95f));
+                    dimOverlayView.setVisibility(View.VISIBLE);
+                } else {
+                    dimOverlayView.setVisibility(View.GONE);
+                }
+            }
             if (showToast) {
                 Toast.makeText(this, "🌙 已开启夜间模式（亮度最小）", Toast.LENGTH_SHORT).show();
             }
@@ -935,6 +958,9 @@ public class DesktopClockActivity extends AppCompatActivity {
             float restore = (savedNormalBrightness > 0.05f) ? savedNormalBrightness
                     : prefs.getFloat(DesktopConfig.KEY_NORMAL_BRIGHTNESS, DesktopConfig.DEFAULT_NORMAL_BRIGHTNESS);
             setBrightnessInternal(clamp(restore, 0.05f, 1f));
+            if (dimOverlayView != null) {
+                dimOverlayView.setVisibility(View.GONE);
+            }
             if (showToast) {
                 Toast.makeText(this, "☀️ 已退出夜间模式", Toast.LENGTH_SHORT).show();
             }
@@ -972,7 +998,10 @@ public class DesktopClockActivity extends AppCompatActivity {
         if (hintView == null) return;
         int percent = Math.round(currentBrightness() * 100);
         if (nightModeActive) {
-            hintView.setText("🌙 夜间模式 (亮度 " + Math.max(1, percent) + "%) · 双击退出夜间模式 · 长按退出");
+            boolean extraDim = prefs.getBoolean(DesktopConfig.KEY_NIGHT_EXTRA_DIM, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM);
+            int depth = prefs.getInt(DesktopConfig.KEY_NIGHT_EXTRA_DIM_DEPTH, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM_DEPTH);
+            String extraStr = extraDim ? " · 极暗+" + depth + "%" : "";
+            hintView.setText("🌙 夜间模式 (亮度 " + Math.max(1, percent) + "%" + extraStr + ") · 双击退出 · 长按退出");
         } else {
             hintView.setText("亮度 " + percent + "% · 双击开启夜间模式 · 长按屏幕退出 · 左侧上下滑动调亮度");
         }

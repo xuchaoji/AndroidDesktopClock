@@ -43,6 +43,8 @@ public final class DesktopConfig {
     public static final String KEY_NIGHT_MODE_START = "desktop_night_mode_start";
     public static final String KEY_NIGHT_MODE_END = "desktop_night_mode_end";
     public static final String KEY_NIGHT_MODE_BRIGHTNESS = "desktop_night_mode_brightness";
+    public static final String KEY_NIGHT_EXTRA_DIM = "desktop_night_extra_dim";
+    public static final String KEY_NIGHT_EXTRA_DIM_DEPTH = "desktop_night_extra_dim_depth";
     public static final String KEY_NORMAL_BRIGHTNESS = "desktop_normal_brightness";
     public static final String KEY_POS_PREFIX = "desktop_pos_";
     public static final String KEY_PRESETS = "desktop_presets_json";
@@ -50,6 +52,8 @@ public final class DesktopConfig {
     public static final String DEFAULT_NIGHT_START = "22:00";
     public static final String DEFAULT_NIGHT_END = "07:00";
     public static final int DEFAULT_NIGHT_BRIGHTNESS = 1;
+    public static final boolean DEFAULT_NIGHT_EXTRA_DIM = true;
+    public static final int DEFAULT_NIGHT_EXTRA_DIM_DEPTH = 50;
     public static final float DEFAULT_NORMAL_BRIGHTNESS = 0.7f;
 
     public static final String COMPONENT_CLOCK = "clock";
@@ -109,6 +113,8 @@ public final class DesktopConfig {
         changed |= putStringIfMissing(prefs, e, KEY_NIGHT_MODE_START, DEFAULT_NIGHT_START);
         changed |= putStringIfMissing(prefs, e, KEY_NIGHT_MODE_END, DEFAULT_NIGHT_END);
         changed |= putIntIfMissing(prefs, e, KEY_NIGHT_MODE_BRIGHTNESS, DEFAULT_NIGHT_BRIGHTNESS);
+        changed |= putBooleanIfMissing(prefs, e, KEY_NIGHT_EXTRA_DIM, DEFAULT_NIGHT_EXTRA_DIM);
+        changed |= putIntIfMissing(prefs, e, KEY_NIGHT_EXTRA_DIM_DEPTH, DEFAULT_NIGHT_EXTRA_DIM_DEPTH);
         if (!prefs.contains(KEY_NORMAL_BRIGHTNESS)) {
             e.putFloat(KEY_NORMAL_BRIGHTNESS, DEFAULT_NORMAL_BRIGHTNESS);
             changed = true;

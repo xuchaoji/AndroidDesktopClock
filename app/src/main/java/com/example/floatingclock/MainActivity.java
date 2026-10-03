@@ -82,6 +82,8 @@ public class MainActivity extends AppCompatActivity {
     private EditText nightStartEdit;
     private EditText nightEndEdit;
     private SeekBar nightBrightnessSeek;
+    private CheckBox nightExtraDimCheck;
+    private SeekBar nightExtraDimDepthSeek;
     private TextView nightStatusLabel;
     private Spinner desktopPresetSpinner;
     private ArrayAdapter<String> desktopPresetAdapter;
@@ -531,7 +533,11 @@ public class MainActivity extends AppCompatActivity {
         pickStartBtn.setOnClickListener(v -> showTimePicker(nightStartEdit, true));
         pickEndBtn.setOnClickListener(v -> showTimePicker(nightEndEdit, false));
 
-        nightBrightnessSeek = addSizeSeek(root, "夜间模式最低亮度(%)", prefs.getInt(DesktopConfig.KEY_NIGHT_MODE_BRIGHTNESS, DesktopConfig.DEFAULT_NIGHT_BRIGHTNESS), 1, 20);
+        nightBrightnessSeek = addSizeSeek(root, "夜间模式最低硬件背光(%)", prefs.getInt(DesktopConfig.KEY_NIGHT_MODE_BRIGHTNESS, DesktopConfig.DEFAULT_NIGHT_BRIGHTNESS), 1, 20);
+
+        nightExtraDimCheck = styledCheck("启用极暗微光模式 (Extra Dim 数字调暗)", prefs.getBoolean(DesktopConfig.KEY_NIGHT_EXTRA_DIM, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM));
+        root.addView(nightExtraDimCheck, matchWrap());
+        nightExtraDimDepthSeek = addSizeSeek(root, "极暗调暗深度(%) (覆盖纯黑滤镜)", prefs.getInt(DesktopConfig.KEY_NIGHT_EXTRA_DIM_DEPTH, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM_DEPTH), 10, 90);
 
         Button toggleManualBtn = secondaryButton("一键切换手动夜间模式");
         root.addView(toggleManualBtn, matchWrap());
@@ -778,6 +784,8 @@ public class MainActivity extends AppCompatActivity {
                 .putString(DesktopConfig.KEY_NIGHT_MODE_START, nightStartEdit != null ? nightStartEdit.getText().toString().trim() : DesktopConfig.DEFAULT_NIGHT_START)
                 .putString(DesktopConfig.KEY_NIGHT_MODE_END, nightEndEdit != null ? nightEndEdit.getText().toString().trim() : DesktopConfig.DEFAULT_NIGHT_END)
                 .putInt(DesktopConfig.KEY_NIGHT_MODE_BRIGHTNESS, seekValue(nightBrightnessSeek, DesktopConfig.DEFAULT_NIGHT_BRIGHTNESS))
+                .putBoolean(DesktopConfig.KEY_NIGHT_EXTRA_DIM, nightExtraDimCheck != null && nightExtraDimCheck.isChecked())
+                .putInt(DesktopConfig.KEY_NIGHT_EXTRA_DIM_DEPTH, seekValue(nightExtraDimDepthSeek, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM_DEPTH))
                 .putBoolean(ClockPrefs.KEY_CPU_OVERLAY, cpuOverlayCheck.isChecked())
                 .commit();
         updatePreview();
