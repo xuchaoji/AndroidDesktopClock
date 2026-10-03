@@ -7,6 +7,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.List;
 
 /** 桌面时钟组件样式、位置与预设的集中管理。 */
@@ -37,8 +38,19 @@ public final class DesktopConfig {
     public static final String KEY_WEATHER_ALPHA = "desktop_weather_alpha";
     public static final String KEY_WEATHER_DATA_CACHE = "desktop_weather_data_cache";
     public static final String KEY_WEATHER_CACHE_TIME = "desktop_weather_cache_time";
+    public static final String KEY_NIGHT_MODE_MANUAL = "desktop_night_mode_manual";
+    public static final String KEY_NIGHT_MODE_AUTO = "desktop_night_mode_auto";
+    public static final String KEY_NIGHT_MODE_START = "desktop_night_mode_start";
+    public static final String KEY_NIGHT_MODE_END = "desktop_night_mode_end";
+    public static final String KEY_NIGHT_MODE_BRIGHTNESS = "desktop_night_mode_brightness";
+    public static final String KEY_NORMAL_BRIGHTNESS = "desktop_normal_brightness";
     public static final String KEY_POS_PREFIX = "desktop_pos_";
     public static final String KEY_PRESETS = "desktop_presets_json";
+
+    public static final String DEFAULT_NIGHT_START = "22:00";
+    public static final String DEFAULT_NIGHT_END = "07:00";
+    public static final int DEFAULT_NIGHT_BRIGHTNESS = 1;
+    public static final float DEFAULT_NORMAL_BRIGHTNESS = 0.7f;
 
     public static final String COMPONENT_CLOCK = "clock";
     public static final String COMPONENT_DATE = "date";
@@ -92,7 +104,53 @@ public final class DesktopConfig {
         changed |= putIntIfMissing(prefs, e, KEY_WEATHER_WIDTH, 290);
         changed |= putIntIfMissing(prefs, e, KEY_WEATHER_HEIGHT, 96);
         changed |= putIntIfMissing(prefs, e, KEY_WEATHER_ALPHA, 100);
+        changed |= putBooleanIfMissing(prefs, e, KEY_NIGHT_MODE_MANUAL, false);
+        changed |= putBooleanIfMissing(prefs, e, KEY_NIGHT_MODE_AUTO, false);
+        changed |= putStringIfMissing(prefs, e, KEY_NIGHT_MODE_START, DEFAULT_NIGHT_START);
+        changed |= putStringIfMissing(prefs, e, KEY_NIGHT_MODE_END, DEFAULT_NIGHT_END);
+        changed |= putIntIfMissing(prefs, e, KEY_NIGHT_MODE_BRIGHTNESS, DEFAULT_NIGHT_BRIGHTNESS);
+        if (!prefs.contains(KEY_NORMAL_BRIGHTNESS)) {
+            e.putFloat(KEY_NORMAL_BRIGHTNESS, DEFAULT_NORMAL_BRIGHTNESS);
+            changed = true;
+        }
         if (changed) e.apply();
+    }
+
+    public static boolean isTimeInRange(String startStr, String endStr, Calendar now) {
+        if (startStr == null || endStr == null || now == null) return false;
+        String[] startParts = startStr.split(":");
+        String[] endParts = endStr.split(":");
+        if (startParts.length < 2 || endParts.length < 2) return false;
+        try {
+            int startH = Integer.parseInt(startParts[0].trim());
+            int startM = Integer.parseInt(startParts[1].trim());
+            int endH = Integer.parseInt(endParts[0].trim());
+            int endM = Integer.parseInt(endParts[1].trim());
+            int curH = now.get(Calendar.HOUR_OF_DAY);
+            int curM = now.get(Calendar.MINUTE);
+            int startMin = startH * 60 + startM;
+            int endMin = endH * 60 + endM;
+            int curMin = curH * 60 + curM;
+            if (startMin == endMin) {
+                return false;
+            }
+            if (startMin < endMin) {
+                return curMin >= startMin && curMin < endMin;
+            } else {
+                return curMin >= startMin || curMin < endMin;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static boolean isNightModeActive(SharedPreferences prefs) {
+        if (prefs == null) return false;
+        if (prefs.getBoolean(KEY_NIGHT_MODE_MANUAL, false)) return true;
+        if (!prefs.getBoolean(KEY_NIGHT_MODE_AUTO, false)) return false;
+        String start = prefs.getString(KEY_NIGHT_MODE_START, DEFAULT_NIGHT_START);
+        String end = prefs.getString(KEY_NIGHT_MODE_END, DEFAULT_NIGHT_END);
+        return isTimeInRange(start, end, Calendar.getInstance());
     }
 
     private static boolean putStringIfMissing(SharedPreferences p, SharedPreferences.Editor e, String k, String v) {

@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -27,6 +28,7 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 
 import java.text.SimpleDateFormat;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
 import java.util.Random;
@@ -53,6 +55,11 @@ public class DesktopClockActivity extends AppCompatActivity {
     private float brightnessStartValue;
     private boolean brightnessGesture;
     private boolean movedDuringTouch;
+    private boolean nightModeActive = false;
+    private Boolean manualNightOverride = null;
+    private Boolean lastScheduleState = null;
+    private float savedNormalBrightness = -1f;
+    private long lastTapTime = 0L;
     public static final String EXTRA_EDIT_MODE = "edit_mode";
 
     private SharedPreferences prefs;
@@ -329,6 +336,10 @@ public class DesktopClockActivity extends AppCompatActivity {
         updateBattery();
         resetNetworkSample();
 
+        savedNormalBrightness = prefs.getFloat(DesktopConfig.KEY_NORMAL_BRIGHTNESS, DesktopConfig.DEFAULT_NORMAL_BRIGHTNESS);
+        boolean isNight = determineNightModeActive();
+        applyNightModeState(isNight, false);
+
         String format = ClockPrefs.getDesktopFormat(prefs);
         try {
             formatter = ClockPrefs.createFormatter(format);
@@ -362,6 +373,7 @@ public class DesktopClockActivity extends AppCompatActivity {
     private void updateTime() {
         if (formatter == null) formatter = ClockPrefs.createFormatter(ClockPrefs.DEFAULT_DESKTOP_FORMAT);
         clockView.setText(formatter.format(new Date()));
+        checkNightModeSchedule();
     }
 
     private void moveClockSlightly() {
@@ -856,7 +868,7 @@ public class DesktopClockActivity extends AppCompatActivity {
             case MotionEvent.ACTION_MOVE:
                 if (brightnessGesture) {
                     float delta = (touchDownY - event.getY()) / Math.max(1f, v.getHeight());
-                    setBrightness(clamp(brightnessStartValue + delta, 0.05f, 1f));
+                    setBrightness(clamp(brightnessStartValue + delta, 0.01f, 1f));
                     movedDuringTouch = true;
                     return true;
                 }
@@ -868,10 +880,101 @@ public class DesktopClockActivity extends AppCompatActivity {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 handler.removeCallbacks(longPressExitRunnable);
+                if (event.getAction() == MotionEvent.ACTION_UP && !movedDuringTouch && !brightnessGesture) {
+                    long now = SystemClock.uptimeMillis();
+                    if (now - lastTapTime < 350L) {
+                        lastTapTime = 0L;
+                        toggleNightModeManual();
+                    } else {
+                        lastTapTime = now;
+                    }
+                }
                 brightnessGesture = false;
                 return true;
             default:
                 return true;
+        }
+    }
+
+    private boolean determineNightModeActive() {
+        if (manualNightOverride != null) {
+            return manualNightOverride;
+        }
+        if (prefs.getBoolean(DesktopConfig.KEY_NIGHT_MODE_MANUAL, false)) {
+            return true;
+        }
+        return isWithinAutoSchedule();
+    }
+
+    private boolean isWithinAutoSchedule() {
+        if (!prefs.getBoolean(DesktopConfig.KEY_NIGHT_MODE_AUTO, false)) return false;
+        String start = prefs.getString(DesktopConfig.KEY_NIGHT_MODE_START, DesktopConfig.DEFAULT_NIGHT_START);
+        String end = prefs.getString(DesktopConfig.KEY_NIGHT_MODE_END, DesktopConfig.DEFAULT_NIGHT_END);
+        return DesktopConfig.isTimeInRange(start, end, Calendar.getInstance());
+    }
+
+    private float getNightBrightness() {
+        int percent = prefs.getInt(DesktopConfig.KEY_NIGHT_MODE_BRIGHTNESS, DesktopConfig.DEFAULT_NIGHT_BRIGHTNESS);
+        return clamp(percent / 100f, 0.01f, 1f);
+    }
+
+    private void applyNightModeState(boolean night, boolean showToast) {
+        this.nightModeActive = night;
+        if (night) {
+            float cur = currentBrightness();
+            if (cur > 0.05f) {
+                savedNormalBrightness = cur;
+                prefs.edit().putFloat(DesktopConfig.KEY_NORMAL_BRIGHTNESS, savedNormalBrightness).apply();
+            }
+            float nightBrightness = getNightBrightness();
+            setBrightnessInternal(nightBrightness);
+            if (showToast) {
+                Toast.makeText(this, "🌙 已开启夜间模式（亮度最小）", Toast.LENGTH_SHORT).show();
+            }
+        } else {
+            float restore = (savedNormalBrightness > 0.05f) ? savedNormalBrightness
+                    : prefs.getFloat(DesktopConfig.KEY_NORMAL_BRIGHTNESS, DesktopConfig.DEFAULT_NORMAL_BRIGHTNESS);
+            setBrightnessInternal(clamp(restore, 0.05f, 1f));
+            if (showToast) {
+                Toast.makeText(this, "☀️ 已退出夜间模式", Toast.LENGTH_SHORT).show();
+            }
+        }
+        updateHintText();
+    }
+
+    private void toggleNightModeManual() {
+        if (nightModeActive) {
+            manualNightOverride = false;
+            prefs.edit().putBoolean(DesktopConfig.KEY_NIGHT_MODE_MANUAL, false).apply();
+            applyNightModeState(false, true);
+        } else {
+            manualNightOverride = true;
+            prefs.edit().putBoolean(DesktopConfig.KEY_NIGHT_MODE_MANUAL, true).apply();
+            applyNightModeState(true, true);
+        }
+    }
+
+    private void checkNightModeSchedule() {
+        boolean autoScheduleNow = isWithinAutoSchedule();
+        if (lastScheduleState == null) {
+            lastScheduleState = autoScheduleNow;
+        } else if (lastScheduleState != autoScheduleNow) {
+            lastScheduleState = autoScheduleNow;
+            manualNightOverride = null;
+        }
+        boolean shouldBeNight = determineNightModeActive();
+        if (shouldBeNight != nightModeActive) {
+            applyNightModeState(shouldBeNight, true);
+        }
+    }
+
+    private void updateHintText() {
+        if (hintView == null) return;
+        int percent = Math.round(currentBrightness() * 100);
+        if (nightModeActive) {
+            hintView.setText("🌙 夜间模式 (亮度 " + Math.max(1, percent) + "%) · 双击退出夜间模式 · 长按退出");
+        } else {
+            hintView.setText("亮度 " + percent + "% · 双击开启夜间模式 · 长按屏幕退出 · 左侧上下滑动调亮度");
         }
     }
 
@@ -882,13 +985,19 @@ public class DesktopClockActivity extends AppCompatActivity {
     }
 
     private void setBrightness(float value) {
+        setBrightnessInternal(value);
+        if (!nightModeActive) {
+            savedNormalBrightness = value;
+            prefs.edit().putFloat(DesktopConfig.KEY_NORMAL_BRIGHTNESS, value).apply();
+        }
+    }
+
+    private void setBrightnessInternal(float value) {
         brightness = value;
         WindowManager.LayoutParams attrs = getWindow().getAttributes();
         attrs.screenBrightness = value;
         getWindow().setAttributes(attrs);
-        if (hintView != null) {
-            hintView.setText("亮度 " + Math.round(value * 100) + "% · 长按屏幕退出 · 左侧上下滑动调亮度");
-        }
+        updateHintText();
     }
 
     private float clamp(float value, float min, float max) {

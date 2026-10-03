@@ -19,6 +19,7 @@ import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.app.AlertDialog;
+import android.app.TimePickerDialog;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -30,6 +31,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+
+import java.util.Calendar;
+import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
     private static final int REQ_OVERLAY = 1001;
@@ -73,6 +77,12 @@ public class MainActivity extends AppCompatActivity {
     private SeekBar weatherHeightSeek;
     private SeekBar weatherAlphaSeek;
     private CheckBox weatherBoldCheck;
+    private CheckBox nightModeManualCheck;
+    private CheckBox nightModeAutoCheck;
+    private EditText nightStartEdit;
+    private EditText nightEndEdit;
+    private SeekBar nightBrightnessSeek;
+    private TextView nightStatusLabel;
     private Spinner desktopPresetSpinner;
     private ArrayAdapter<String> desktopPresetAdapter;
 
@@ -397,6 +407,8 @@ public class MainActivity extends AppCompatActivity {
         weatherBoldCheck = styledCheck("天气粗体", prefs.getBoolean(DesktopConfig.KEY_WEATHER_BOLD, true));
         root.addView(weatherBoldCheck, matchWrap());
 
+        buildNightModeSection(root);
+
         cpuOverlayCheck = new CheckBox(this);
         cpuOverlayCheck.setText("悬浮窗显示 CPU 占用（可拖动）");
         cpuOverlayCheck.setTextColor(Color.rgb(24, 32, 56));
@@ -477,6 +489,108 @@ public class MainActivity extends AppCompatActivity {
             @Override public void onStartTrackingTouch(SeekBar seekBar) { }
             @Override public void onStopTrackingTouch(SeekBar seekBar) { }
         };
+    }
+
+    private void buildNightModeSection(LinearLayout root) {
+        root.addView(label("🌙 夜间模式"), matchWrap());
+        TextView tip = sectionTip("支持定时开启与手动开启；开启后自动将屏幕亮度调至最低（1%），适合夜晚睡眠摆钟。");
+        root.addView(tip, matchWrap());
+
+        nightStatusLabel = label("当前状态：计算中...");
+        nightStatusLabel.setTextColor(Color.rgb(70, 90, 140));
+        root.addView(nightStatusLabel, matchWrap());
+
+        nightModeManualCheck = styledCheck("手动开启夜间模式 (立即最小亮度)", prefs.getBoolean(DesktopConfig.KEY_NIGHT_MODE_MANUAL, false));
+        root.addView(nightModeManualCheck, matchWrap());
+
+        nightModeAutoCheck = styledCheck("定时开启夜间模式", prefs.getBoolean(DesktopConfig.KEY_NIGHT_MODE_AUTO, false));
+        root.addView(nightModeAutoCheck, matchWrap());
+
+        LinearLayout timeRow = new LinearLayout(this);
+        timeRow.setOrientation(LinearLayout.HORIZONTAL);
+        timeRow.setPadding(0, dp(4), 0, dp(4));
+
+        LinearLayout startCol = new LinearLayout(this);
+        startCol.setOrientation(LinearLayout.VERTICAL);
+        startCol.setPadding(0, 0, dp(6), 0);
+        nightStartEdit = addLabeledEdit(startCol, "开始时间 (HH:mm)", prefs.getString(DesktopConfig.KEY_NIGHT_MODE_START, DesktopConfig.DEFAULT_NIGHT_START), InputType.TYPE_CLASS_DATETIME);
+        Button pickStartBtn = secondaryButton("选择开始时间");
+        startCol.addView(pickStartBtn, matchWrap());
+        timeRow.addView(startCol, weightWrap(1f));
+
+        LinearLayout endCol = new LinearLayout(this);
+        endCol.setOrientation(LinearLayout.VERTICAL);
+        endCol.setPadding(dp(6), 0, 0, 0);
+        nightEndEdit = addLabeledEdit(endCol, "结束时间 (HH:mm)", prefs.getString(DesktopConfig.KEY_NIGHT_MODE_END, DesktopConfig.DEFAULT_NIGHT_END), InputType.TYPE_CLASS_DATETIME);
+        Button pickEndBtn = secondaryButton("选择结束时间");
+        endCol.addView(pickEndBtn, matchWrap());
+        timeRow.addView(endCol, weightWrap(1f));
+
+        root.addView(timeRow, matchWrap());
+
+        pickStartBtn.setOnClickListener(v -> showTimePicker(nightStartEdit, true));
+        pickEndBtn.setOnClickListener(v -> showTimePicker(nightEndEdit, false));
+
+        nightBrightnessSeek = addSizeSeek(root, "夜间模式最低亮度(%)", prefs.getInt(DesktopConfig.KEY_NIGHT_MODE_BRIGHTNESS, DesktopConfig.DEFAULT_NIGHT_BRIGHTNESS), 1, 20);
+
+        Button toggleManualBtn = secondaryButton("一键切换手动夜间模式");
+        root.addView(toggleManualBtn, matchWrap());
+        toggleManualBtn.setOnClickListener(v -> {
+            boolean next = !nightModeManualCheck.isChecked();
+            nightModeManualCheck.setChecked(next);
+            prefs.edit().putBoolean(DesktopConfig.KEY_NIGHT_MODE_MANUAL, next).apply();
+            updateNightModeStatusLabel();
+            toast(next ? "🌙 已开启手动夜间模式" : "☀️ 已关闭手动夜间模式");
+        });
+
+        nightModeManualCheck.setOnCheckedChangeListener((btn, isChecked) -> updateNightModeStatusLabel());
+        nightModeAutoCheck.setOnCheckedChangeListener((btn, isChecked) -> updateNightModeStatusLabel());
+        nightStartEdit.setOnFocusChangeListener((v, hasFocus) -> { if (!hasFocus) updateNightModeStatusLabel(); });
+        nightEndEdit.setOnFocusChangeListener((v, hasFocus) -> { if (!hasFocus) updateNightModeStatusLabel(); });
+
+        updateNightModeStatusLabel();
+    }
+
+    private void updateNightModeStatusLabel() {
+        if (nightStatusLabel == null) return;
+        boolean manual = nightModeManualCheck != null && nightModeManualCheck.isChecked();
+        boolean auto = nightModeAutoCheck != null && nightModeAutoCheck.isChecked();
+        String start = nightStartEdit != null ? nightStartEdit.getText().toString().trim() : DesktopConfig.DEFAULT_NIGHT_START;
+        String end = nightEndEdit != null ? nightEndEdit.getText().toString().trim() : DesktopConfig.DEFAULT_NIGHT_END;
+        boolean inRange = auto && DesktopConfig.isTimeInRange(start, end, Calendar.getInstance());
+
+        if (manual) {
+            nightStatusLabel.setText("当前状态：🌙 已手动开启夜间模式（全屏亮度将保持最低）");
+            nightStatusLabel.setTextColor(Color.rgb(180, 50, 50));
+        } else if (inRange) {
+            nightStatusLabel.setText("当前状态：🌙 定时夜间模式生效中 (" + start + " ~ " + end + "，全屏亮度最低)");
+            nightStatusLabel.setTextColor(Color.rgb(180, 50, 50));
+        } else if (auto) {
+            nightStatusLabel.setText("当前状态：☀️ 日间正常模式（定时已设为 " + start + " ~ " + end + "）");
+            nightStatusLabel.setTextColor(Color.rgb(40, 130, 60));
+        } else {
+            nightStatusLabel.setText("当前状态：☀️ 日间正常模式（夜间模式未开启）");
+            nightStatusLabel.setTextColor(Color.rgb(70, 90, 140));
+        }
+    }
+
+    private void showTimePicker(EditText targetEdit, boolean isStart) {
+        String cur = targetEdit.getText().toString().trim();
+        int hour = isStart ? 22 : 7;
+        int minute = 0;
+        if (cur.contains(":")) {
+            String[] parts = cur.split(":");
+            try {
+                hour = Integer.parseInt(parts[0].trim());
+                minute = Integer.parseInt(parts[1].trim());
+            } catch (Exception ignored) {}
+        }
+        TimePickerDialog dialog = new TimePickerDialog(this, (view, hourOfDay, min) -> {
+            String val = String.format(Locale.getDefault(), "%02d:%02d", hourOfDay, min);
+            targetEdit.setText(val);
+            updateNightModeStatusLabel();
+        }, hour, minute, true);
+        dialog.show();
     }
 
     private void buildPresetControls(LinearLayout root) {
@@ -659,6 +773,11 @@ public class MainActivity extends AppCompatActivity {
                 .putInt(DesktopConfig.KEY_WEATHER_WIDTH, seekValue(weatherWidthSeek, 290))
                 .putInt(DesktopConfig.KEY_WEATHER_HEIGHT, seekValue(weatherHeightSeek, 96))
                 .putInt(DesktopConfig.KEY_WEATHER_ALPHA, seekValue(weatherAlphaSeek, 100))
+                .putBoolean(DesktopConfig.KEY_NIGHT_MODE_MANUAL, nightModeManualCheck != null && nightModeManualCheck.isChecked())
+                .putBoolean(DesktopConfig.KEY_NIGHT_MODE_AUTO, nightModeAutoCheck != null && nightModeAutoCheck.isChecked())
+                .putString(DesktopConfig.KEY_NIGHT_MODE_START, nightStartEdit != null ? nightStartEdit.getText().toString().trim() : DesktopConfig.DEFAULT_NIGHT_START)
+                .putString(DesktopConfig.KEY_NIGHT_MODE_END, nightEndEdit != null ? nightEndEdit.getText().toString().trim() : DesktopConfig.DEFAULT_NIGHT_END)
+                .putInt(DesktopConfig.KEY_NIGHT_MODE_BRIGHTNESS, seekValue(nightBrightnessSeek, DesktopConfig.DEFAULT_NIGHT_BRIGHTNESS))
                 .putBoolean(ClockPrefs.KEY_CPU_OVERLAY, cpuOverlayCheck.isChecked())
                 .commit();
         updatePreview();
